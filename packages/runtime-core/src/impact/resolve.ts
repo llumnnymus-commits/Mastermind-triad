@@ -144,6 +144,23 @@ class MaxHeap {
 }
 
 /**
+ * Relations that attach to the implicated set without extending it.
+ *
+ * Constraints and verifications are obvious: a policy binds a change, but the
+ * other things that policy governs are not themselves affected by it.
+ *
+ * Metadata is the same rule for a less obvious reason. A telemetry trace
+ * observing the auth service, or a cost record attributed to it, is an
+ * attachment — not a route. Letting the walk transit through one makes every
+ * log stream a bridge between the parts of the system it happens to watch, and
+ * a graph where observability connects everything to everything is a graph
+ * where impact analysis flags everything and therefore says nothing.
+ */
+function isTerminal(relation: Relation): boolean {
+  return relation === 'constraint' || relation === 'verification' || relation === 'metadata';
+}
+
+/**
  * Resolve an intent against the graph into the set of nodes it implicates.
  *
  * The walk is a max-product relaxation: a node's score is the strongest path
@@ -196,30 +213,28 @@ export function resolveImpact(
     //   - A VERIFICATION attaches at full weight regardless. The asymmetry is
     //     intentional: running a test that turns out to be unnecessary costs
     //     seconds, and skipping one that was necessary costs an outage.
-    if (current.relation !== 'constraint' && current.relation !== 'verification') {
-      for (const type of ['governed_by', 'verified_by'] as const) {
-        const relation: Relation = type === 'governed_by' ? 'constraint' : 'verification';
-        const score = relation === 'constraint' ? current.score : 1;
-        for (const attached of graph.neighborsByType(current.id, type)) {
-          const prior = settled.get(attached);
-          if (prior !== undefined && prior.score >= score) continue;
-          heap.push({
-            id: attached,
-            relation,
-            score,
-            depth: current.depth + 1,
-            path: [
-              ...current.path,
-              { from: current.id, type, to: attached, direction: 'outbound' },
-            ],
-          });
-        }
+    // Terminal relations are attachments rather than participants: pulled in
+    // for the record, and the walk neither extends through them nor gathers
+    // attachments of their own.
+    if (isTerminal(current.relation)) continue;
+
+    for (const type of ['governed_by', 'verified_by'] as const) {
+      const relation: Relation = type === 'governed_by' ? 'constraint' : 'verification';
+      const score = relation === 'constraint' ? current.score : 1;
+      for (const attached of graph.neighborsByType(current.id, type)) {
+        const prior = settled.get(attached);
+        if (prior !== undefined && prior.score >= score) continue;
+        heap.push({
+          id: attached,
+          relation,
+          score,
+          depth: current.depth + 1,
+          path: [...current.path, { from: current.id, type, to: attached, direction: 'outbound' }],
+        });
       }
     }
 
     if (current.depth >= maxDepth) continue;
-    // Constraints and verifications are terminal — do not walk onward from them.
-    if (current.relation === 'constraint' || current.relation === 'verification') continue;
 
     // BLAST: walk inbound. These nodes depend on what is changing; they break.
     for (const { edge, other } of graph.inbound(current.id)) {

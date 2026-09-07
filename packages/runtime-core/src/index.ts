@@ -30,6 +30,8 @@ export {
 export type { GraphNode, GraphEdge, NodeId } from './graph/nodes.js';
 export { ProjectGraph } from './graph/graph.js';
 export type { AdjacentEdge } from './graph/graph.js';
+export { diffGraphs, edgeKey } from './graph/diff.js';
+export type { GraphDiff, NodeChange, EdgeKey } from './graph/diff.js';
 
 // Intent
 export {
@@ -57,6 +59,63 @@ export { classifyRisk, baselineRiskOf, RISK_TIERS } from './policy/risk.js';
 export type { RiskAssessment, RiskReason, RiskTier } from './policy/risk.js';
 export { buildApprovalRequest, explainPath } from './policy/approval.js';
 export type { ApprovalRequest, AffectedSystem, Reversibility } from './policy/approval.js';
+
+// Isolation
+export { planMirror, MATERIALIZATION } from './mirror/plan.js';
+export type {
+  MirrorPlan,
+  MirrorOptions,
+  MaterializedNode,
+  Materialization,
+} from './mirror/plan.js';
+
+// Validation
+export { runMechanicalValidation } from './validation/mechanical.js';
+export type { MirrorExecutor, ExecutionOutcome } from './validation/mechanical.js';
+export { runBehavioralValidation } from './validation/behavioral.js';
+export type {
+  BehavioralEvaluator,
+  BehavioralInput,
+  EvaluationContext,
+} from './validation/behavioral.js';
+export { summarize, CHECK_STATUSES } from './validation/types.js';
+export type { CheckResult, CheckStatus, ValidationReport } from './validation/types.js';
+
+// Deployment and lineage
+export { evaluatePromotion, STAGES, DEFAULT_STAGES } from './deployment/stages.js';
+export type {
+  Stage,
+  StageSpec,
+  StageEvidence,
+  Baseline,
+  PromotionGate,
+  PromotionDecision,
+  PromotionVerdict,
+  RollbackPlan,
+} from './deployment/stages.js';
+export { openLineage, recordStage, auditPrediction } from './deployment/lineage.js';
+export type {
+  LineageRecord,
+  DeploymentOutcome,
+  ImpactPrediction,
+  ApprovalRecord,
+  MirrorSummary,
+  StageRecord,
+  OpenLineageInput,
+  PredictionAudit,
+} from './deployment/lineage.js';
+
+// Runtime economics
+export { attributeCosts, assessSustainability, COST_CATEGORIES } from './cost/attribution.js';
+export type {
+  CostEvent,
+  CostCategory,
+  CostReport,
+  NodeCost,
+  ValueSignal,
+  SustainabilityAssessment,
+  SustainabilityVerdict,
+} from './cost/attribution.js';
 
 // Fixtures
 export { loginAppGraph } from './fixtures/login-app.js';
