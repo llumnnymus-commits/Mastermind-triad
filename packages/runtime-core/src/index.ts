@@ -31,6 +31,8 @@ export type { GraphNode, GraphEdge, NodeId } from './graph/nodes.js';
 export { ProjectGraph } from './graph/graph.js';
 export type { AdjacentEdge } from './graph/graph.js';
 export { diffGraphs, edgeKey } from './graph/diff.js';
+export { serializeGraph, deserializeGraph } from './graph/serialize.js';
+export type { SerializedGraph } from './graph/serialize.js';
 export type { GraphDiff, NodeChange, EdgeKey } from './graph/diff.js';
 
 // Intent
@@ -116,6 +118,9 @@ export type {
   SustainabilityAssessment,
   SustainabilityVerdict,
 } from './cost/attribution.js';
+
+// Adapters
+export type { DomainAdapter, IngestResult, UnresolvedReference } from './adapters/types.js';
 
 // Fixtures
 export { loginAppGraph } from './fixtures/login-app.js';

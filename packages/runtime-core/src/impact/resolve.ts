@@ -220,6 +220,15 @@ export function resolveImpact(
 
     for (const type of ['governed_by', 'verified_by'] as const) {
       const relation: Relation = type === 'governed_by' ? 'constraint' : 'verification';
+      // Policy binds anything the change touches, in either direction: a
+      // retention rule on data the change merely reads still governs it.
+      //
+      // Verification does not. A test attached to a dependency cannot catch a
+      // regression in the thing that depends on it — nothing flows that way.
+      // Pulling those in produces a "must pass" list containing every test in
+      // the repository for a change to a leaf file, which is how a
+      // verification plan stops being read.
+      if (relation === 'verification' && current.relation === 'context') continue;
       const score = relation === 'constraint' ? current.score : 1;
       for (const attached of graph.neighborsByType(current.id, type)) {
         const prior = settled.get(attached);
@@ -236,8 +245,18 @@ export function resolveImpact(
 
     if (current.depth >= maxDepth) continue;
 
+    // Direction is sticky, and that is a correctness property rather than an
+    // optimization. A walk that steps outbound to a dependency and then inbound
+    // again arrives at *siblings* — other things that happen to import the same
+    // module. They share a dependency with the target; they do not depend on
+    // it, and changing the target cannot break them. Mixing the directions
+    // reports them as casualties, which on a real codebase is most of what a
+    // naive blast radius contains.
+    const walkBlast = current.relation === 'target' || current.relation === 'blast';
+    const walkContext = current.relation === 'target' || current.relation === 'context';
+
     // BLAST: walk inbound. These nodes depend on what is changing; they break.
-    for (const { edge, other } of graph.inbound(current.id)) {
+    if (walkBlast) for (const { edge, other } of graph.inbound(current.id)) {
       const semantics = EDGE_TYPES[edge.type];
       if (semantics.role !== 'structural' && semantics.role !== 'metadata') continue;
       const score = current.score * semantics.blast;
@@ -257,7 +276,7 @@ export function resolveImpact(
 
     // CONTEXT: walk outbound. What this node relies on; it must be respected,
     // but changing a dependent rarely breaks its dependency.
-    for (const { edge, other } of graph.outbound(current.id)) {
+    if (walkContext) for (const { edge, other } of graph.outbound(current.id)) {
       const semantics = EDGE_TYPES[edge.type];
       if (semantics.role !== 'structural' && semantics.role !== 'metadata') continue;
       const score = current.score * semantics.context;

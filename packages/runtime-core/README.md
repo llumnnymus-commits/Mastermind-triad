@@ -17,8 +17,10 @@ An application under this runtime is never "finished, packaged, shipped." It sta
 | Mechanical + behavioral validation | ✅ |
 | Progressive deployment and lineage | ✅ |
 | Cost attribution and sustainability | ✅ |
+| Graph serialization (versioned, revalidated on load) | ✅ |
+| Domain adapter interface + a real TypeScript adapter | ✅ (see `@lbr/adapter-typescript`) |
 | Executor implementations (real build workers, real evaluators) | interfaces only |
-| Persistent graph store | in-memory only |
+| Persistent graph store | in-memory + JSON round-trip |
 
 ## Try it
 
@@ -43,11 +45,17 @@ Blast weights are high and context weights are low for the same edge type. Colla
 
 The walk is a max-product relaxation, so a node reachable by both a weak and a strong path settles on the strong one — anything else understates the blast radius.
 
+Direction is also **sticky**, which is a correctness property rather than an optimization. A walk that steps outbound to a dependency and then inbound again arrives at *siblings* — other modules importing the same thing. They share a dependency with the target; they do not depend on it, and changing the target cannot break them. Mixing directions reports them as casualties, and on a real codebase that is most of what a naive blast radius contains.
+
+No structural weight sits at exactly 1.0 either. At 1.0 a dependency chain never decays, so every transitive dependent of a core module scores the same as a direct importer. Confidence genuinely falls with distance — intermediate modules encapsulate — so the weights say so.
+
 ### 2. Policy binds at the strength of what it governs; verification does not
 
 A policy attached to a node that is barely implicated is barely relevant. Attaching every reachable policy at full weight makes a data-retention rule bind a worker restart, and a gate that fires on everything is a gate people learn to click past. So a constraint inherits the score of the node it governs — the `governed_by` hop itself costs nothing, but distance to the governed node still counts.
 
 Verification is deliberately asymmetric: tests attach at full weight regardless of distance. An unnecessary test costs seconds; a skipped one costs an outage.
+
+But verification attaches only to the target and the blast radius, never to context. A test on a dependency cannot catch a regression in what depends on it — nothing flows that way — and pulling those in produces a "must pass" list containing every test in the repository for a change to a leaf file, which is how a verification plan stops being read.
 
 A policy may declare `appliesToActions`. A PII retention rule governs schema migrations and data deletion — it has no opinion about whether a worker may be restarted.
 

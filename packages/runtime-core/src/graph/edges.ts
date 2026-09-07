@@ -28,12 +28,16 @@
  * edge type. Collapsing them into one number is the mistake that makes naive
  * impact analysis either miss real breakage or flag the entire codebase.
  *
- * Two edge roles ignore direction entirely:
+ * Two edge roles ignore direction entirely, and the weights below are the cost
+ * of the hop itself rather than the relevance of what it reaches:
  *
- *   - CONSTRAINT (`governed_by`) — a policy that governs any implicated node
- *     governs the change. Policy never decays with distance.
- *   - VERIFICATION (`verified_by`) — the tests and evals attached to any
- *     implicated node are the tests that must run. Also never decays.
+ *   - CONSTRAINT (`governed_by`) — crossing into a policy costs nothing, so a
+ *     policy is exactly as relevant as the node it governs is implicated. It is
+ *     not diluted for being one edge away, and not inflated for being reachable
+ *     at all.
+ *   - VERIFICATION (`verified_by`) — attaches at full weight regardless of
+ *     distance. Deliberately asymmetric with policy: an unnecessary test costs
+ *     seconds, a skipped one costs an outage.
  */
 
 export const EDGE_ROLES = ['structural', 'constraint', 'verification', 'metadata'] as const;
@@ -58,9 +62,17 @@ export interface EdgeSemantics {
 
 export const EDGE_TYPES = {
   // ---- structural: these carry real breakage -----------------------------
+  /**
+   * Blast sits just below 1.0 on purpose. At exactly 1.0 a dependency chain
+   * never decays, so in any real codebase every transitive dependent of a core
+   * module scores identically to a direct importer and the confidence number
+   * stops distinguishing anything. Confidence genuinely does fall with
+   * distance — intermediate modules encapsulate, and a typed interface two
+   * hops up absorbs many changes below it — so the weight has to say so.
+   */
   depends_on: {
     role: 'structural',
-    blast: 1.0,
+    blast: 0.9,
     context: 0.35,
     reads: 'depends on',
   },
@@ -84,7 +96,7 @@ export const EDGE_TYPES = {
    */
   writes: {
     role: 'structural',
-    blast: 1.0,
+    blast: 0.95,
     context: 0.45,
     reads: 'writes to',
   },

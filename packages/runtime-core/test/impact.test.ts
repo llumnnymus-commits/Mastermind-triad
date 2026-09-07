@@ -134,8 +134,20 @@ describe('impact resolution — mechanics', () => {
     // discounted by a longer alternative route existing.
     const impact = resolveImpact(graph, changeAuthService);
     const login = impact.implicated.find((n) => n.id === 'surface:screen:login')!;
-    expect(login.score).toBe(1); // depends_on blast weight is 1.0
+    expect(login.score).toBe(0.9); // depends_on blast weight
     expect(login.depth).toBe(1);
+  });
+
+  it('decays confidence along transitive dependency chains', () => {
+    // login_view implements login_screen which depends on auth. It genuinely
+    // is at risk, but not as certainly as the screen that imports auth
+    // directly — and a weight of exactly 1.0 on depends_on would rate them
+    // identically, which is what makes the score useless on a real codebase.
+    const impact = resolveImpact(graph, changeAuthService);
+    const direct = impact.implicated.find((n) => n.id === 'surface:screen:login')!;
+    const transitive = impact.implicated.find((n) => n.id === 'code:module:login_view')!;
+    expect(transitive.score).toBeLessThan(direct.score);
+    expect(transitive.depth).toBeGreaterThan(direct.depth);
   });
 
   it('respects the epsilon cutoff', () => {
@@ -244,5 +256,81 @@ describe('intent limits', () => {
     expect(accounts).toBeDefined();
     expect(accounts!.score).toBeLessThan(0.25);
     expect(impact.violations).toEqual([]);
+  });
+});
+
+describe('walk direction is sticky', () => {
+  const graph = loginAppGraph();
+
+  it('does not report siblings as casualties', () => {
+    // The profile screen and the login screen both depend on the auth service.
+    // Changing the profile screen cannot break the login screen — they share a
+    // dependency, they do not depend on each other. A walk that steps outbound
+    // to auth and then inbound again would report the login screen as being in
+    // the blast radius, which on a real codebase is most of what a naive
+    // analysis contains.
+    const impact = resolveImpact(
+      graph,
+      parseIntent({
+        id: 'intent_sibling',
+        goal: 'Restyle the profile screen',
+        rationale: 'design refresh',
+        source: 'human',
+        raisedBy: 'actor:human:owner',
+        targets: ['surface:screen:profile'],
+        actions: ['code_change'],
+        successCondition: 'looks right',
+      }),
+    );
+
+    expect(impact.blastRadius.map((n) => n.id)).not.toContain('surface:screen:login');
+    expect(impact.blastRadius.map((n) => n.id)).not.toContain('surface:flow:account_recovery');
+    // Auth is still correctly reported as context the change relies on.
+    expect(impact.implicated.find((n) => n.id === 'service:api:auth_service')!.relation).toBe(
+      'context',
+    );
+  });
+
+  it('still walks dependents transitively through a pure inbound chain', () => {
+    const impact = resolveImpact(graph, changeAuthService);
+    // auth <- login <- login_view, all inbound, so the chain holds.
+    expect(impact.blastRadius.map((n) => n.id)).toContain('code:module:login_view');
+  });
+
+  it('still walks dependencies transitively through a pure outbound chain', () => {
+    const impact = resolveImpact(graph, changeAuthService);
+    // auth -> users -> accounts, all outbound, so the chain holds.
+    const accounts = impact.implicated.find((n) => n.id === 'service:database:accounts')!;
+    expect(accounts.relation).toBe('context');
+  });
+});
+
+describe('verification attaches only where a regression could be caught', () => {
+  const graph = loginAppGraph();
+
+  it('does not demand the tests of things the change cannot break', () => {
+    // The profile screen depends on auth, which has its own suite. That suite
+    // exercises auth; it cannot catch a regression in the screen above it.
+    const impact = resolveImpact(
+      graph,
+      parseIntent({
+        id: 'intent_leaf',
+        goal: 'Restyle the profile screen',
+        rationale: 'design refresh',
+        source: 'human',
+        raisedBy: 'actor:human:owner',
+        targets: ['surface:screen:profile'],
+        actions: ['code_change'],
+        successCondition: 'looks right',
+      }),
+    );
+    expect(impact.verifications.map((v) => v.id)).not.toContain('evidence:test:auth_service');
+  });
+
+  it('still demands the tests of everything in the blast radius', () => {
+    const impact = resolveImpact(graph, changeAuthService);
+    const ids = impact.verifications.map((v) => v.id);
+    expect(ids).toContain('evidence:test:auth_service'); // the target's own
+    expect(ids).toContain('evidence:test:browser_login'); // attached to a blast node
   });
 });
