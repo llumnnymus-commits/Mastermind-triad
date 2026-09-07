@@ -1,0 +1,28 @@
+{
+  "name": "@lbr/runtime-core",
+  "version": "0.0.1",
+  "description": "Live Build Runtime core substrate: the project graph, intent resolution, impact analysis, and the authority gate.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
