@@ -119,6 +119,29 @@ export type {
   SustainabilityVerdict,
 } from './cost/attribution.js';
 
+// Persistence
+export {
+  saveLineage,
+  loadLineage,
+  listLineage,
+  DEFAULT_LINEAGE_DIR,
+} from './store/lineage-store.js';
+export type { StoredLineage, SaveLineageResult } from './store/lineage-store.js';
+
+// Change proposal
+export {
+  ChangeProposalSchema,
+  FileEditSchema,
+  EditPathSchema,
+  parseChangeProposal,
+} from './change/proposal.js';
+export type {
+  ChangeProposal,
+  ChangeProposer,
+  FileEdit,
+  AppliedChange,
+} from './change/proposal.js';
+
 // Adapters
 export type { DomainAdapter, IngestResult, UnresolvedReference } from './adapters/types.js';
 

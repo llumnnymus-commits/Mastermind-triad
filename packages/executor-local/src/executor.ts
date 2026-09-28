@@ -1,6 +1,8 @@
 import { access } from 'node:fs/promises';
 import { relative, sep } from 'node:path';
 import type {
+  AppliedChange,
+  ChangeProposal,
   ExecutionOutcome,
   MirrorExecutor,
   MirrorPlan,
@@ -9,6 +11,7 @@ import type {
 } from '@lbr/runtime-core';
 import { CommandRunner, NODE_PROJECT_COMMANDS, type AllowedCommand } from './commands.js';
 import { NO_SANDBOX, type SandboxProfile } from './sandbox.js';
+import { applyProposal } from './apply.js';
 import { createWorkspace, resolveInWorkspace, type MirrorWorkspace } from './workspace.js';
 
 export interface LocalExecutorOptions {
@@ -32,6 +35,15 @@ export interface LocalExecutorOptions {
    * `detectSandbox()` picks the strongest profile the machine supports.
    */
   readonly sandbox?: SandboxProfile;
+  /**
+   * A change to apply inside the mirror once it is materialized.
+   *
+   * Applied during materialization, so every step after it — `connect`,
+   * `build`, `start`, the verifications — sees the changed tree. Wiring it
+   * later would mean `connect` certified a mirror that no longer exists by the
+   * time anything runs in it.
+   */
+  readonly proposal?: ChangeProposal;
 }
 
 /**
@@ -66,6 +78,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
    * implementation may assume that.
    */
   #materializing: Promise<MirrorWorkspace> | undefined;
+  #applied: AppliedChange | undefined;
 
   constructor(options: LocalExecutorOptions) {
     this.#options = options;
@@ -74,6 +87,11 @@ export class LocalMirrorExecutor implements MirrorExecutor {
 
   get workspace(): MirrorWorkspace | undefined {
     return this.#workspace;
+  }
+
+  /** What the proposal actually did on disk, once the mirror exists. */
+  get applied(): AppliedChange | undefined {
+    return this.#applied;
   }
 
   /**
@@ -170,6 +188,18 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       ...sandbox.lacks.map((l) => `lacks ${l}`),
     ];
 
+    // A proposal that could not be fully applied has not been carried out, and
+    // validating what did land would measure a change nobody proposed.
+    if (this.#applied !== undefined && this.#applied.refused.length > 0) {
+      const refused = this.#applied.refused
+        .map((r) => `${r.path} (${r.reason})`)
+        .join('; ');
+      return {
+        ok: false,
+        detail: `${this.#applied.refused.length} edit(s) in the proposal were refused: ${refused}`,
+      };
+    }
+
     if (missing.length > 0) {
       return {
         ok: false,
@@ -249,6 +279,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
     await this.#workspace?.dispose();
     this.#workspace = undefined;
     this.#runner = undefined;
+    this.#applied = undefined;
   }
 
   #pathOf(id: NodeId): string | undefined {
@@ -276,6 +307,11 @@ export class LocalMirrorExecutor implements MirrorExecutor {
         envAllowlist: this.#options.envAllowlist,
         sandbox: this.#options.sandbox,
       });
+      // Applied here rather than by a caller, so there is no ordering for
+      // anyone to get wrong: the mirror handed back is already the changed one.
+      if (this.#options.proposal !== undefined && this.#applied === undefined) {
+        this.#applied = await applyProposal(workspace.root, this.#options.proposal);
+      }
       return workspace;
     } catch (error) {
       // A failed attempt must not be cached, or every later call replays it.
