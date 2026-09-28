@@ -151,3 +151,24 @@ describe('ingesting a real source tree', () => {
     expect(graph.size.edges).toBeGreaterThan(0);
   });
 });
+
+describe('mirrors are not source', () => {
+  it('does not ingest a materialized mirror as if it were the project', async () => {
+    // Mirrors are created inside the repository so dependency resolution still
+    // works. They are copies, so ingesting one duplicates every node under a
+    // second set of ids — and a graph that double-counts the system is not a
+    // model of it.
+    const { mkdir, writeFile, rm } = await import('node:fs/promises');
+    const mirrorDir = join(fixture, '.lbr-mirrors', 'run-1', 'src');
+    try {
+      await mkdir(mirrorDir, { recursive: true });
+      await writeFile(join(mirrorDir, 'service.ts'), `export const copied = 1;`);
+
+      const { graph } = await ingestFixture();
+      const names = [...graph.nodes()].map((n) => n.name);
+      expect(names.every((n) => !n.includes('.lbr-mirrors'))).toBe(true);
+    } finally {
+      await rm(join(fixture, '.lbr-mirrors'), { recursive: true, force: true });
+    }
+  });
+});

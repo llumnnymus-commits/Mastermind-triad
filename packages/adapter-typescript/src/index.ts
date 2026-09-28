@@ -25,7 +25,19 @@ export interface TypeScriptAdapterOptions {
   readonly testMarkers?: readonly string[];
 }
 
-const DEFAULT_IGNORE = ['node_modules', 'dist', '.git', 'coverage', 'build'];
+const DEFAULT_IGNORE = [
+  'node_modules',
+  'dist',
+  '.git',
+  'coverage',
+  'build',
+  // Mirrors are materialized inside the repository so that dependency
+  // resolution still works (see @lbr/executor-local). They are copies of the
+  // source, so ingesting them would duplicate every node in the graph under a
+  // second set of ids — and a graph that double-counts the system is not a
+  // model of it.
+  '.lbr-mirrors',
+];
 const DEFAULT_TEST_MARKERS = ['.test.', '.spec.', `${sep}test${sep}`, `${sep}__tests__${sep}`];
 
 /**

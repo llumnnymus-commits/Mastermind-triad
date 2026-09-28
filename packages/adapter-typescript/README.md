@@ -6,12 +6,14 @@ The graph is only as good as what fills it, and nothing fills itself. This is th
 
 ## Use it
 
+The `lbr` CLI lives in [`@lbr/cli`](../cli):
+
 ```bash
 # what is in this tree?
-npx tsx packages/adapter-typescript/src/cli.ts ingest packages/runtime-core
+npx tsx packages/cli/src/cli.ts ingest packages/runtime-core
 
 # what breaks if I change this file?
-npx tsx packages/adapter-typescript/src/cli.ts impact packages/runtime-core src/graph/graph.ts
+npx tsx packages/cli/src/cli.ts impact packages/runtime-core src/graph/graph.ts
 ```
 
 Output for a core file:
