@@ -27,7 +27,7 @@ import {
 } from '@lbr/runtime-core';
 import { TypeScriptAdapter } from '@lbr/adapter-typescript';
 import { PolicyAdapter, DEFAULT_POLICY_PATH } from '@lbr/adapter-policy';
-import { LocalMirrorExecutor } from '@lbr/executor-local';
+import { LocalMirrorExecutor, detectSandbox, NO_SANDBOX } from '@lbr/executor-local';
 import { ClaudeEvaluator } from '@lbr/evaluator-claude';
 
 const [command, ...rest] = process.argv.slice(2);
@@ -245,10 +245,21 @@ async function validate(): Promise<void> {
     return;
   }
 
+  // Confinement is opt-in: it blocks network egress, which breaks a build that
+  // legitimately fetches. Asking for it on a repository you did not write is
+  // the point of it existing.
+  const sandbox = flags.has('sandbox') ? await detectSandbox() : NO_SANDBOX;
+  if (flags.has('sandbox') && sandbox === NO_SANDBOX) {
+    console.log(
+      '\n  WARNING    --sandbox was requested but this machine refused to create namespaces;\n             commands will run unconfined. Treat the result accordingly.',
+    );
+  }
+
   const executor = new LocalMirrorExecutor({
     sourceRoot: dir,
     graph,
     nodeModulesFrom: flags.get('node-modules'),
+    sandbox,
   });
 
   try {
@@ -308,6 +319,9 @@ async function validate(): Promise<void> {
         behavioral.passed ? 'pass' : 'incomplete'
       } · lineage ${record.deploymentId}`,
     );
+    console.log(`  sandbox   ${sandbox.name}`);
+    for (const provided of sandbox.provides) console.log(`  provides  ${provided}`);
+    for (const lacking of sandbox.lacks) console.log(`  lacks     ${lacking}`);
     for (const caveat of executor.workspace?.caveats ?? []) {
       console.log(`  caveat    ${caveat}`);
     }
@@ -327,7 +341,7 @@ function usage(): void {
   console.error('  lbr ingest   <dir> [--out graph.json]');
   console.error('  lbr impact   <dir> <file> [--action code_change|data_delete|restart|…]');
   console.error(
-    '  lbr validate <dir> <file> [--action …] [--node-modules <dir>] [--judge]',
+    '  lbr validate <dir> <file> [--action …] [--node-modules <dir>] [--sandbox] [--judge]',
   );
   process.exit(1);
 }

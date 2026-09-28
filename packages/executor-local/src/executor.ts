@@ -8,6 +8,7 @@ import type {
   ProjectGraph,
 } from '@lbr/runtime-core';
 import { CommandRunner, NODE_PROJECT_COMMANDS, type AllowedCommand } from './commands.js';
+import { NO_SANDBOX, type SandboxProfile } from './sandbox.js';
 import { createWorkspace, resolveInWorkspace, type MirrorWorkspace } from './workspace.js';
 
 export interface LocalExecutorOptions {
@@ -22,6 +23,15 @@ export interface LocalExecutorOptions {
   readonly envAllowlist?: readonly string[];
   /** Directory whose `node_modules` the mirror links. Defaults to the nearest ancestor's. */
   readonly nodeModulesFrom?: string;
+  /**
+   * Confinement for every command this executor runs. Defaults to none, which
+   * is what it did before profiles existed — a caller that wants isolation
+   * asks for it, and one that does not keeps the old behaviour rather than
+   * silently acquiring a sandbox that breaks a build needing the network.
+   *
+   * `detectSandbox()` picks the strongest profile the machine supports.
+   */
+  readonly sandbox?: SandboxProfile;
 }
 
 /**
@@ -149,6 +159,17 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       (c) => c.includes('cannot restore') || c.includes('cannot intercept'),
     );
 
+    // The sandbox's own limits belong in the same report as the mirror's. A
+    // caller deciding whether this executor is strong enough for the code it is
+    // about to run should not have to consult two places, and the local
+    // executor's whole claim to honesty is that it says what it does not do.
+    const sandbox = this.#options.sandbox ?? NO_SANDBOX;
+    const isolation = [
+      `sandbox: ${sandbox.name}`,
+      ...sandbox.provides.map((p) => `provides ${p}`),
+      ...sandbox.lacks.map((l) => `lacks ${l}`),
+    ];
+
     if (missing.length > 0) {
       return {
         ok: false,
@@ -161,7 +182,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
 
     return {
       ok: true,
-      detail: `mirror satisfies the plan; caveats: ${workspace.caveats.join('; ')}`,
+      detail: `mirror satisfies the plan; ${isolation.join('; ')}; caveats: ${workspace.caveats.join('; ')}`,
     };
   }
 
@@ -253,6 +274,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       this.#runner ??= new CommandRunner({
         cwd: workspace.root,
         envAllowlist: this.#options.envAllowlist,
+        sandbox: this.#options.sandbox,
       });
       return workspace;
     } catch (error) {

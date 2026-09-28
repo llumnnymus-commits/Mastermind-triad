@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { NO_SANDBOX, type SandboxProfile } from './sandbox.js';
 
 const run = promisify(execFile);
 
@@ -57,6 +58,14 @@ export interface CommandRunnerOptions {
   readonly defaultTimeoutMs?: number;
   /** Bytes of stdout/stderr retained. Prevents a runaway build exhausting memory. */
   readonly maxBufferBytes?: number;
+  /**
+   * Confinement applied to every command. Defaults to none.
+   *
+   * Applied here rather than at each call site so it cannot be forgotten on
+   * one path: a runner constructed with a profile has no way to run anything
+   * outside it.
+   */
+  readonly sandbox?: SandboxProfile;
 }
 
 /**
@@ -78,11 +87,13 @@ export class CommandRunner {
   readonly #env: Record<string, string>;
   readonly #defaultTimeoutMs: number;
   readonly #maxBufferBytes: number;
+  readonly #sandbox: SandboxProfile;
 
   constructor(options: CommandRunnerOptions) {
     this.#cwd = options.cwd;
     this.#defaultTimeoutMs = options.defaultTimeoutMs ?? 300_000;
     this.#maxBufferBytes = options.maxBufferBytes ?? 8 * 1024 * 1024;
+    this.#sandbox = options.sandbox ?? NO_SANDBOX;
 
     const allowed = new Set<string>([
       ...DEFAULT_ENV_ALLOWLIST,
@@ -98,6 +109,10 @@ export class CommandRunner {
 
   get cwd(): string {
     return this.#cwd;
+  }
+
+  get sandbox(): SandboxProfile {
+    return this.#sandbox;
   }
 
   /** The environment a child will receive. Exposed so tests can assert on it. */
@@ -140,13 +155,16 @@ export class CommandRunner {
       };
     }
 
-    const args = [...command.args, ...extraArgs];
+    // Confined before anything else is decided, so every path through this
+    // method runs inside the profile.
+    const confined = this.#sandbox.wrap(command);
+    const args = [...confined.args, ...extraArgs];
 
     try {
-      const { stdout, stderr } = await run(command.file, args, {
+      const { stdout, stderr } = await run(confined.file, args, {
         cwd: this.#cwd,
         env: this.#env,
-        timeout: command.timeoutMs ?? this.#defaultTimeoutMs,
+        timeout: confined.timeoutMs ?? this.#defaultTimeoutMs,
         maxBuffer: this.#maxBufferBytes,
         // Explicit, though false is the default: this is the property the
         // whole class exists to guarantee, so it is stated rather than assumed.

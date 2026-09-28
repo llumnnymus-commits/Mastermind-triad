@@ -93,10 +93,14 @@ describe('materializing a workspace', () => {
     }
   });
 
-  it('states the isolation it does not provide', async () => {
+  it('does not claim anything about how commands are confined', async () => {
+    // Confinement is the executor's business, via its sandbox profile. A
+    // workspace asserting "no process or network isolation" was describing
+    // something it does not control, and the claim went stale the moment a
+    // sandbox existed.
     const workspace = await createWorkspace(plan(), { sourceRoot: fixture });
     try {
-      expect(workspace.caveats.some((c) => c.includes('no process, network'))).toBe(true);
+      expect(workspace.caveats.every((c) => !c.includes('no process, network'))).toBe(true);
     } finally {
       await workspace.dispose();
     }

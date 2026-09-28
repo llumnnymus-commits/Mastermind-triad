@@ -139,9 +139,12 @@ export async function createWorkspace(
     });
   }
 
-  const caveats = [
-    'commands run as the host user — no process, network, or filesystem isolation from the machine',
-  ];
+  // Note what the *workspace* does not provide. How commands are confined is
+  // the executor's business, via its sandbox profile — a workspace asserting
+  // "no process or network isolation" was making a claim about something it
+  // does not control, and that claim became false the moment a sandbox was
+  // wired in.
+  const caveats: string[] = [];
 
   if (escapingLinks.length > 0) {
     caveats.push(

@@ -7,5 +7,7 @@ export type {
   CommandRunnerOptions,
   NodeCommandName,
 } from './commands.js';
-export { createWorkspace, resolveInWorkspace } from './workspace.js';
+export { createWorkspace, resolveInWorkspace, resolveLexically } from './workspace.js';
+export { NO_SANDBOX, namespaceSandbox, detectSandbox } from './sandbox.js';
+export type { SandboxProfile, NamespaceSandboxOptions } from './sandbox.js';
 export type { MirrorWorkspace, WorkspaceOptions } from './workspace.js';
