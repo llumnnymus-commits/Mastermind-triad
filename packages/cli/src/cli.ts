@@ -28,6 +28,7 @@ import {
 import { TypeScriptAdapter } from '@lbr/adapter-typescript';
 import { PolicyAdapter, DEFAULT_POLICY_PATH } from '@lbr/adapter-policy';
 import { LocalMirrorExecutor } from '@lbr/executor-local';
+import { ClaudeEvaluator } from '@lbr/evaluator-claude';
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -262,6 +263,20 @@ async function validate(): Promise<void> {
     // Behavioral validation with no change applied: the graph is identical, so
     // this reports the honest baseline — scope held, nothing drifted, and the
     // intent's success condition was never actually judged.
+    // `validate` applies no change — it builds and tests the project as it
+    // stands, in a mirror. So the graph it compares is the graph it started
+    // with, and "did the change do what was asked" has no subject. Wiring a
+    // judge to that would spend money to be told nothing moved, so the flag
+    // says why instead of reporting a confusing failure. The evaluator is
+    // reached through `runBehavioralValidation` by a caller that has actually
+    // applied a change.
+    if (flags.has('judge')) {
+      console.log(
+        '\n  NOTE     --judge has nothing to judge here: validate applies no change, so the\n           before and after graphs are identical. Pass an evaluator to\n           runBehavioralValidation from a caller that has applied one.',
+      );
+    }
+
+
     const behavioral = await runBehavioralValidation({
       before: graph,
       after: graph,
@@ -311,6 +326,8 @@ function usage(): void {
   console.error('usage:');
   console.error('  lbr ingest   <dir> [--out graph.json]');
   console.error('  lbr impact   <dir> <file> [--action code_change|data_delete|restart|…]');
-  console.error('  lbr validate <dir> <file> [--action …] [--node-modules <dir>]');
+  console.error(
+    '  lbr validate <dir> <file> [--action …] [--node-modules <dir>] [--judge]',
+  );
   process.exit(1);
 }

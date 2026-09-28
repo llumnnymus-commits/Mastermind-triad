@@ -120,7 +120,8 @@ describe('the executor actually runs things', () => {
 
     const report = await runMechanicalValidation(intent, plan, open);
     expect(report.passed).toBe(true);
-    expect(report.checks.map((c) => c.name).slice(0, 3)).toEqual(['build', 'start', 'connect']);
+    // connect first: the mirror is verified before the project's own scripts run.
+    expect(report.checks.map((c) => c.name).slice(0, 3)).toEqual(['connect', 'build', 'start']);
     expect(report.checks.some((c) => c.name.startsWith('verify'))).toBe(true);
   });
 });

@@ -18,7 +18,8 @@
     "@lbr/runtime-core": "0.0.1",
     "@lbr/adapter-typescript": "0.0.1",
     "@lbr/executor-local": "0.0.1",
-    "@lbr/adapter-policy": "0.0.1"
+    "@lbr/adapter-policy": "0.0.1",
+    "@lbr/evaluator-claude": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

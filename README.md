@@ -12,6 +12,7 @@ An application under this runtime is never "finished, packaged, shipped." It sta
 | [`@lbr/adapter-typescript`](packages/adapter-typescript) | The first domain adapter — builds the graph from a real TypeScript source tree. |
 | [`@lbr/adapter-policy`](packages/adapter-policy) | Declared policy — the domain that cannot be read off a repository, because it is decisions rather than facts. |
 | [`@lbr/executor-local`](packages/executor-local) | A real `MirrorExecutor`: materializes an isolated workspace and runs actual build and test commands in it. |
+| [`@lbr/evaluator-claude`](packages/evaluator-claude) | A `BehavioralEvaluator` — judges whether a change met the success condition its intent declared, and says `unclear` when the evidence doesn't reach the claim. |
 | [`@lbr/cli`](packages/cli) | The `lbr` command line: `ingest`, `impact`, `validate`. |
 
 ```bash
