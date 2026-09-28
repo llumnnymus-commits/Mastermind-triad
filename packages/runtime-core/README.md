@@ -19,7 +19,9 @@ An application under this runtime is never "finished, packaged, shipped." It sta
 | Cost attribution and sustainability | ✅ |
 | Graph serialization (versioned, revalidated on load) | ✅ |
 | Domain adapter interface + a real TypeScript adapter | ✅ (see `@lbr/adapter-typescript`) |
-| Executor implementations (real build workers, real evaluators) | interfaces only |
+| Change proposal contract — the keystone that lets the loop write anything | ✅ |
+| Executor implementations (real build workers, real evaluators, real proposers) | ✅ (see `@lbr/executor-local`, `@lbr/evaluator-claude`, `@lbr/proposer-claude`) |
+| Lineage persisted to disk and read back | ✅ |
 | Persistent graph store | in-memory + JSON round-trip |
 
 ## Try it
@@ -144,6 +146,8 @@ src/
   fixtures/    the login-workflow graph from the specification
 ```
 
-Everything here is pure. The two places that must touch real infrastructure — `MirrorExecutor` (build workers) and `BehavioralEvaluator` (success-condition judgment) — are interfaces, so which checks run, in what order, and what a failure means all stay testable without a container runtime.
+Everything here is pure. The three places that must touch the outside world — `MirrorExecutor` (build workers), `BehavioralEvaluator` (success-condition judgment) and `ChangeProposer` (writing the change) — are interfaces, so which checks run, in what order, and what a failure means all stay testable without a container runtime or a credential.
+
+`ChangeProposer` is the one that makes the rest of this package more than analysis. Everything above it — the walk, the gate, the mirror plan, the two validation layers — describes a change that something else produces. `change/proposal.ts` is where that something else is constrained: paths are workspace-relative or refused, and `expectedNodes` is recorded as the proposer's *claim* and compared against what re-ingesting the mirror actually observed. A proposer that supplied the after-graph would be grading its own work, and `scope adherence` — the most valuable check here — would mean nothing.
 
 The `ProjectGraph` interface is deliberately narrow — `node`, `inbound`, `outbound` — because that is the entire surface impact resolution needs, which is what will let the store move to a persistent backend without touching the engine.

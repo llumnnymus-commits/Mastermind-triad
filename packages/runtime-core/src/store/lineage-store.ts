@@ -27,6 +27,28 @@ export interface SaveLineageResult {
 }
 
 /**
+ * Deployment ids that are safe to use as a filename.
+ *
+ * A deployment id is not always chosen by the runtime. `lbr build` derives one
+ * from a build step's id, and a build plan can be written by a model or come
+ * from a file — so an id of `../../../etc/cron.d/x` would have this function
+ * writing JSON wherever it pointed, and `loadLineage` reading from there. An
+ * allowlist rather than a denylist: the set of characters a legitimate id needs
+ * is small, and every clever escape people find is in the complement of it.
+ */
+const SAFE_DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function assertSafeDeploymentId(deploymentId: string): void {
+  if (!SAFE_DEPLOYMENT_ID.test(deploymentId) || deploymentId.includes('..')) {
+    throw new Error(
+      `unsafe deployment id ${JSON.stringify(deploymentId)}: ` +
+        'a lineage id must be 1-128 characters of letters, digits, dot, dash or underscore, ' +
+        'start with a letter or digit, and contain no path separators or ".."',
+    );
+  }
+}
+
+/**
  * Persist a lineage record so it outlives the process.
  *
  * Until this existed the runtime created a record at the moment a change became
@@ -40,6 +62,8 @@ export async function saveLineage(
   baseGraph: ProjectGraph,
   dir = DEFAULT_LINEAGE_DIR,
 ): Promise<SaveLineageResult> {
+  assertSafeDeploymentId(record.deploymentId);
+
   const target = join(root, dir);
   await mkdir(target, { recursive: true });
 
@@ -66,6 +90,8 @@ export async function loadLineage(
   deploymentId: string,
   dir = DEFAULT_LINEAGE_DIR,
 ): Promise<{ record: LineageRecord; baseGraph: ProjectGraph }> {
+  assertSafeDeploymentId(deploymentId);
+
   const path = join(root, dir, `${deploymentId}.json`);
   const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<StoredLineage>;
 

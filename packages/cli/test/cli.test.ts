@@ -309,3 +309,243 @@ describe('scope adherence catches a change that exceeded what it claimed', () =>
     expect(stdout).toMatch(/PASS\s+scope adherence/);
   });
 });
+
+/**
+ * `lbr build` constructs an application from nothing, one validated step at a
+ * time. These run the real binary against real npm, so they are slower than the
+ * rest of the suite — which is the point: an app that only builds under a mock
+ * is not an app.
+ */
+describe('build', () => {
+  /** An empty directory to build into, cleaned up with the rest of the scratch. */
+  async function outDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'lbr-build-out-'));
+    scratch.push(dir);
+    await rm(dir, { recursive: true, force: true });
+    return dir;
+  }
+
+  /** A directory holding a plan and its per-step proposals. */
+  async function plans(
+    plan: unknown,
+    proposals: Record<string, unknown>,
+  ): Promise<{ planPath: string; proposalsDir: string }> {
+    const dir = await mkdtemp(join(tmpdir(), 'lbr-build-plan-'));
+    scratch.push(dir);
+    const planPath = join(dir, 'plan.json');
+    await writeFile(planPath, JSON.stringify(plan));
+    for (const [id, proposal] of Object.entries(proposals)) {
+      await writeFile(join(dir, `${id}.json`), JSON.stringify(proposal));
+    }
+    return { planPath, proposalsDir: dir };
+  }
+
+  const storeSource = [
+    'export interface Note { readonly id: string; readonly text: string }',
+    '',
+    'export class NoteStore {',
+    '  readonly #notes: Note[] = [];',
+    '  add(text: string): Note {',
+    '    const note = { id: String(this.#notes.length + 1), text };',
+    '    this.#notes.push(note);',
+    '    return note;',
+    '  }',
+    '  list(): readonly Note[] { return [...this.#notes]; }',
+    '}',
+    '',
+  ].join('\n');
+
+  const onePlan = {
+    appName: 'notes',
+    summary: 'a note taker',
+    steps: [
+      {
+        id: 'store',
+        goal: 'add an in-memory note store',
+        rationale: 'everything else needs somewhere to keep notes',
+        successCondition: 'adding a note then listing returns it',
+        files: ['src/store.ts', 'src/store.test.ts'],
+      },
+    ],
+  };
+
+  it('refuses a directory that already has something in it', async () => {
+    // The scaffold overwrites by path; running into an existing project would
+    // silently replace its package.json.
+    const dir = await project();
+    const { stderr, code } = await lbr(['build', '--goal', 'anything', '--out', dir]);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain('needs an empty directory');
+  });
+
+  it('rejects an app target it has no implementation for', async () => {
+    // Naming a target that cannot be built must fail before a scaffold is
+    // written, not produce a directory of files nothing can compile.
+    const out = await outDir();
+    const { stderr, code } = await lbr([
+      'build', '--goal', 'anything', '--out', out, '--app-target', 'android-kotlin',
+    ]);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("unknown app target 'android-kotlin'");
+    await expect(readdir(out)).rejects.toThrow();
+  });
+
+  it('needs both a goal and an output directory', async () => {
+    const out = await outDir();
+    expect((await lbr(['build', '--out', out])).stderr).toContain('usage:');
+    expect((await lbr(['build', '--goal', 'notes'])).stderr).toContain('usage:');
+  });
+
+  it('rejects a plan whose step id could climb out of a directory', async () => {
+    // The step id becomes two filenames — where the proposal is read from and
+    // where the lineage is written — and a plan can be model-written, so the
+    // plan is validated rather than cast. This must fail before npm install,
+    // not after a scaffold is on disk.
+    const out = await outDir();
+    const { planPath, proposalsDir } = await plans(
+      {
+        appName: 'notes',
+        summary: 'a note taker',
+        steps: [
+          {
+            id: '../../../../tmp/lbr-escaped',
+            goal: 'g',
+            rationale: 'r',
+            successCondition: 'c',
+            files: ['src/x.ts'],
+          },
+        ],
+      },
+      {},
+    );
+
+    const { code, stdout, stderr } = await lbr([
+      'build', '--goal', 'a note taker', '--out', out,
+      '--plan', planPath, '--proposals', proposalsDir,
+    ]);
+
+    expect(code).not.toBe(0);
+    expect(`${stdout}${stderr}`).not.toContain('PROMOTED');
+    await expect(readFile('/tmp/lbr-escaped.json', 'utf8')).rejects.toThrow();
+  }, 600_000);
+
+  it(
+    'builds an application that compiles, tests and runs',
+    async () => {
+      const out = await outDir();
+      const { planPath, proposalsDir } = await plans(onePlan, {
+        store: {
+          intentId: 'store',
+          rationale: 'adds the note store and a test for it',
+          edits: [
+            { path: 'src/store.ts', contents: storeSource },
+            {
+              path: 'src/store.test.ts',
+              contents: [
+                "import { describe, it, expect } from 'vitest';",
+                "import { NoteStore } from './store.js';",
+                '',
+                "describe('the note store', () => {",
+                "  it('returns a note it was given', () => {",
+                '    const store = new NoteStore();',
+                "    store.add('buy milk');",
+                "    expect(store.list()[0]!.text).toBe('buy milk');",
+                '  });',
+                '});',
+                '',
+              ].join('\n'),
+            },
+          ],
+        },
+      });
+
+      const { stdout, code } = await lbr([
+        'build', '--goal', 'a note taker', '--out', out,
+        '--plan', planPath, '--proposals', proposalsDir,
+      ]);
+
+      expect(code).toBe(0);
+      expect(stdout).toContain("PROMOTED   step 'store' is now part of the app");
+      expect(stdout).toContain('BUILT      1 step(s), all validated');
+
+      // The step's own test ran. Before this existed a step could add a test,
+      // never run it, and be promoted on the strength of the tests it happened
+      // not to touch — the verification plan is built from the graph as it was
+      // before the change, where the new test does not exist.
+      expect(stdout).toMatch(/PASS\s+verify src\/store\.test\.ts \(added by this step\)/);
+
+      // The promoted files are in the app, and the app is a real project.
+      expect(await readFile(join(out, 'src/store.ts'), 'utf8')).toBe(storeSource);
+      await run('npm', ['test'], { cwd: out, timeout: 150_000 });
+      await run('npm', ['run', 'build'], { cwd: out, timeout: 150_000 });
+      const { stdout: appOutput } = await run(process.execPath, [join(out, 'dist/main.js')], {
+        cwd: out,
+        timeout: 30_000,
+      });
+      expect(appOutput.trim().length).toBeGreaterThan(0);
+
+      // One lineage record per step, showing the construction.
+      const records = await readdir(join(out, '.lbr/lineage'));
+      expect(records).toHaveLength(1);
+    },
+    600_000,
+  );
+
+  it(
+    'does not promote a step whose own test fails',
+    async () => {
+      const out = await outDir();
+      const { planPath, proposalsDir } = await plans(onePlan, {
+        store: {
+          intentId: 'store',
+          rationale: 'adds the note store and a test that does not hold',
+          edits: [
+            { path: 'src/store.ts', contents: storeSource },
+            {
+              path: 'src/store.test.ts',
+              contents: [
+                "import { describe, it, expect } from 'vitest';",
+                "import { NoteStore } from './store.js';",
+                '',
+                "describe('the note store', () => {",
+                "  it('does not do this', () => {",
+                '    const store = new NoteStore();',
+                "    store.add('buy milk');",
+                '    expect(store.list()).toHaveLength(7);',
+                '  });',
+                '});',
+                '',
+              ].join('\n'),
+            },
+          ],
+        },
+      });
+
+      const { stdout, code } = await lbr([
+        'build', '--goal', 'a note taker', '--out', out,
+        '--plan', planPath, '--proposals', proposalsDir,
+      ]);
+
+      expect(code).not.toBe(0);
+      expect(stdout).toMatch(/FAIL\s+verify src\/store\.test\.ts \(added by this step\)/);
+      expect(stdout).toContain("STOPPED    step 'store' did not validate");
+      expect(stdout).not.toContain('PROMOTED');
+
+      // The app keeps whatever last validated, which here is the scaffold.
+      await expect(readFile(join(out, 'src/store.ts'), 'utf8')).rejects.toThrow();
+
+      // And the failure is recorded rather than only printed.
+      const records = await readdir(join(out, '.lbr/lineage'));
+      expect(records).toHaveLength(1);
+      const stored = JSON.parse(
+        await readFile(join(out, '.lbr/lineage', records[0]!), 'utf8'),
+      ) as { record: { outcome: string; validation: { checks: { name: string; status: string }[] }[] } };
+      expect(stored.record.outcome).toBe('abandoned');
+      const mechanical = stored.record.validation[0]!;
+      expect(
+        mechanical.checks.find((c) => c.name.includes('added by this step'))!.status,
+      ).toBe('fail');
+    },
+    600_000,
+  );
+});

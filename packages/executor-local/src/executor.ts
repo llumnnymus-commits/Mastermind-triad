@@ -4,6 +4,7 @@ import type {
   AppliedChange,
   ChangeProposal,
   ExecutionOutcome,
+  GraphNode,
   MirrorExecutor,
   MirrorPlan,
   NodeId,
@@ -79,10 +80,32 @@ export class LocalMirrorExecutor implements MirrorExecutor {
    */
   #materializing: Promise<MirrorWorkspace> | undefined;
   #applied: AppliedChange | undefined;
+  /**
+   * Nodes observed in the mirror after the change, keyed by id.
+   *
+   * The executor's graph describes the source *before* anything was applied,
+   * so a node the change created is not in it — and a caller asking to run a
+   * test the change just added gets "carries no path" for a file that is
+   * sitting right there in the mirror. This overlay is how the executor is
+   * told what re-ingesting the mirror observed.
+   */
+  readonly #observed = new Map<NodeId, GraphNode>();
 
   constructor(options: LocalExecutorOptions) {
     this.#options = options;
     this.#commands = options.commands ?? NODE_PROJECT_COMMANDS;
+  }
+
+  /**
+   * Teach the executor about nodes that exist in the mirror but not in the
+   * source graph it was constructed with.
+   *
+   * These must come from re-ingesting the mirror, never from a proposal's own
+   * account of what it added: the point of re-ingestion is that a proposal
+   * cannot nominate which files count as its tests.
+   */
+  learn(nodes: Iterable<GraphNode>): void {
+    for (const node of nodes) this.#observed.set(node.id, node);
   }
 
   get workspace(): MirrorWorkspace | undefined {
@@ -283,7 +306,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
   }
 
   #pathOf(id: NodeId): string | undefined {
-    const node = this.#options.graph.node(id);
+    const node = this.#options.graph.node(id) ?? this.#observed.get(id);
     const path = node?.attributes['path'];
     return typeof path === 'string' ? path : undefined;
   }

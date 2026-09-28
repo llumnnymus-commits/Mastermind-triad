@@ -6,6 +6,7 @@
  *   lbr impact   <dir> <file>           what a change to this file would touch
  *   lbr validate <dir> <file>           the whole loop against the tree as it stands
  *   lbr run      <dir> --goal "..."     propose a change, apply it, validate it
+ *   lbr build    --goal "..." --out <dir>   build an application, one step at a time
  *
  * `impact` answers the question the substrate exists for. `validate` runs the
  * real build and the tests the change implicates, against the tree unchanged.
@@ -31,14 +32,33 @@ import {
   type ActionClass,
   type ChangeProposal,
   type ChangeProposer,
+  type CheckResult,
   type CostEvent,
   type GraphNode,
   type Intent,
+  type ValidationReport,
 } from '@lbr/runtime-core';
 import { TypeScriptAdapter } from '@lbr/adapter-typescript';
 import { PolicyAdapter, DEFAULT_POLICY_PATH } from '@lbr/adapter-policy';
-import { LocalMirrorExecutor, detectSandbox, NO_SANDBOX } from '@lbr/executor-local';
+import { LocalMirrorExecutor, applyProposal, detectSandbox, NO_SANDBOX } from '@lbr/executor-local';
 import { ClaudeEvaluator } from '@lbr/evaluator-claude';
+import { selectTarget, type AppTarget } from '@lbr/app-target-node';
+
+/**
+ * Model spend incurred during this invocation.
+ *
+ * Collected here rather than estimated at the end: the proposer reports what
+ * its own request actually cost, from the response's usage, and an inference
+ * bill nobody attributes is the one cost a runtime economics layer exists to
+ * stop losing.
+ *
+ * Declared above the dispatch below, not beside the code that fills it. `const`
+ * is not hoisted, so a command reading this from further down the file reached
+ * it before its initializer had run and died with "cannot access before
+ * initialization" — after the change had been applied and validated, which is
+ * the worst place to lose a run.
+ */
+const modelCosts: CostEvent[] = [];
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -66,6 +86,9 @@ try {
       break;
     case 'run':
       await run();
+      break;
+    case 'build':
+      await buildApp();
       break;
     default:
       usage();
@@ -422,7 +445,7 @@ async function run(): Promise<void> {
     return;
   }
 
-  const proposer = await selectProposer();
+  const proposer = await selectProposer(dir);
   if (proposer === undefined) {
     console.log(
       '\nNO PROPOSER  nothing can write a change. Pass --proposal <file.json> for a prepared\n' +
@@ -499,7 +522,9 @@ async function run(): Promise<void> {
       console.log(`  ${check.status.toUpperCase().padEnd(13)}${check.name} — ${check.detail}`);
     }
 
-    const costs = collectCosts(mechanical, intent);
+    // Compute measured by the executor, plus whatever the proposer's own
+    // requests actually cost. Both are measured; neither is estimated.
+    const costs = [...collectCosts(mechanical, intent), ...modelCosts];
     const report = attributeCosts(graph, costs);
 
     let record = openLineage({
@@ -555,13 +580,389 @@ async function run(): Promise<void> {
 }
 
 /**
+ * Build an application, one validated step at a time.
+ *
+ * The source documents describe an agent that "constructs the project one
+ * graph-node at a time, providing a plain-English explanation for every stage".
+ * That is what this does, and it is not a presentation choice: each step is a
+ * real intent driven through the impact walk, the authority gate, an isolated
+ * mirror, a real compile and a real test run. A step that breaks the build
+ * stops the run and the lineage says which one — which a single generation
+ * producing a whole application cannot do, because its first failure
+ * invalidates everything and nothing localizes the fault.
+ *
+ * A step is promoted into the app only after it validated in the mirror. Until
+ * then the app on disk is whatever last passed.
+ */
+async function buildApp(): Promise<void> {
+  const goal = flags.get('goal');
+  const out = flags.get('out');
+  if (goal === undefined || goal === 'true' || out === undefined || out === 'true') return usage();
+
+  const target = selectTarget(flags.get('app-target') ?? 'node-typescript');
+  const { mkdir, readdir } = await import('node:fs/promises');
+
+  await mkdir(out, { recursive: true });
+  if ((await readdir(out)).length > 0) {
+    console.error(`\nlbr build needs an empty directory; ${out} is not empty.\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`\nBUILDING   ${goal}`);
+  console.log(`TARGET     ${target.produces}`);
+  console.log(`INTO       ${out}`);
+
+  // The plan is obtained before anything is written or installed.
+  //
+  // A plan that is malformed — a step id that is not a usable filename, a step
+  // with no goal — fails the whole build, so paying for a scaffold and a full
+  // dependency install first buys nothing and leaves a directory behind. This
+  // throws for an invalid plan and returns undefined only when nothing was
+  // available to plan with, which is a different situation and handled below.
+  const plan = await loadBuildPlan();
+
+  // The scaffold goes through the same apply path as any other change, even
+  // though this directory is the application being created rather than a tree
+  // to be protected. The paths are the target's own constants, so nothing here
+  // is untrusted — but a write path that bypasses the confinement is one nobody
+  // notices has started carrying untrusted input.
+  const scaffold = target.scaffold(goal);
+  const scaffolded = await applyProposal(
+    out,
+    {
+      intentId: 'scaffold',
+      rationale: `scaffold a ${target.name} project`,
+      edits: scaffold,
+      expectedNodes: [],
+    },
+    { allowNonMirror: true },
+  );
+  if (scaffolded.refused.length > 0) {
+    const reasons = scaffolded.refused.map((r) => `${r.path} (${r.reason})`).join(', ');
+    console.error(`\nlbr build refused part of its own scaffold: ${reasons}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`SCAFFOLD   ${scaffolded.written.length} file(s) written`);
+
+  // Installed once, here, so the generated application is a project in its own
+  // right rather than something that only builds inside this repository. Every
+  // step after this compiles and tests against these dependencies.
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const [installBin, ...installArgs] = target.installCommand;
+  process.stdout.write('INSTALL    ');
+  try {
+    await exec(installBin!, [...installArgs], { cwd: out, timeout: 600_000 });
+    console.log('dependencies installed');
+  } catch (error) {
+    console.log('FAILED');
+    console.error(`\nlbr build could not install dependencies: ${(error as Error).message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (plan === undefined) {
+    // Nothing was available to decompose the goal — no prepared plan and no
+    // credential. The scaffold stays: it installed and it compiles, so it is a
+    // working project rather than a half-written directory.
+    console.log(
+      '\nNO PLAN    nothing can decompose this goal into steps. Pass --plan <file.json> for a\n' +
+        '           prepared plan, or configure a credential for the model-backed planner.\n' +
+        `           The scaffold is in ${out} and is a working project.\n`,
+    );
+    return;
+  }
+
+  console.log(`PLAN       ${plan.steps.length} step(s): ${plan.summary}`);
+  for (const [i, step] of plan.steps.entries()) {
+    console.log(`           ${i + 1}. ${step.goal}`);
+  }
+
+  const proposalsDir = flags.get('proposals');
+  let completed = 0;
+
+  for (const [i, step] of plan.steps.entries()) {
+    console.log(`\n── step ${i + 1}/${plan.steps.length} · ${step.id} ─────────────────`);
+    console.log(`GOAL       ${step.goal}`);
+    console.log(`WHY        ${step.rationale}`);
+
+    const proposal = await loadStepProposal(proposalsDir, step.id);
+    if (proposal === undefined) {
+      console.log(
+        `\nSTOPPED    no proposal available for step '${step.id}'. ${completed} step(s) completed.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const outcome = await runOneStep(out, step, proposal);
+    if (!outcome.ok) {
+      console.log(`\nSTOPPED    step '${step.id}' did not validate: ${outcome.reason}`);
+      console.log(`           ${completed} of ${plan.steps.length} step(s) completed.`);
+      console.log(`           lineage: ${outcome.lineagePath ?? 'not recorded'}\n`);
+      process.exitCode = 1;
+      return;
+    }
+
+    // Promote: the step validated in isolation, so it lands in the app and the
+    // next step builds on it.
+    //
+    // Through the same confined apply as the mirror, not a bare join. These
+    // paths came from a proposal — model output, or a file somebody handed us —
+    // and were refused lexically at parse time; this is the check that also
+    // sees through a symlink, of which an installed node_modules has many. It
+    // would be a strange kind of care to confine the copy and not the original.
+    const promoted = await applyProposal(out, proposal, { allowNonMirror: true });
+    if (promoted.refused.length > 0) {
+      const reasons = promoted.refused.map((r) => `${r.path} (${r.reason})`).join(', ');
+      console.log(`\nSTOPPED    step '${step.id}' validated but could not be promoted: ${reasons}`);
+      console.log(`           ${completed} of ${plan.steps.length} step(s) completed.\n`);
+      process.exitCode = 1;
+      return;
+    }
+    completed++;
+    console.log(`PROMOTED   step '${step.id}' is now part of the app`);
+  }
+
+  console.log(`\nBUILT      ${completed} step(s), all validated`);
+  console.log(`           ${out}`);
+  console.log(`           run it: ${target.runHint}\n`);
+}
+
+interface StepOutcome {
+  readonly ok: boolean;
+  readonly reason?: string;
+  readonly lineagePath?: string;
+}
+
+/** One step through the same loop `run` uses. */
+async function runOneStep(
+  appDir: string,
+  step: { id: string; goal: string; rationale: string; successCondition: string },
+  proposal: ChangeProposal,
+): Promise<StepOutcome> {
+  const { graph } = await build(appDir);
+
+  // Anchor on a file the step touches that already exists; otherwise the entry
+  // point, which every project has.
+  const anchor =
+    [...graph.nodes()].find((n) =>
+      proposal.edits.some((e) => n.name === e.path),
+    ) ?? [...graph.nodes()].find((n) => n.name.endsWith('main.ts'));
+
+  if (anchor === undefined) {
+    return { ok: false, reason: 'the app has no node to anchor the impact walk on' };
+  }
+
+  const intent = parseIntent({
+    id: `step_${step.id}_${Date.now()}`,
+    goal: step.goal,
+    rationale: step.rationale,
+    source: 'agent',
+    raisedBy: 'actor:agent:builder',
+    targets: [anchor.id],
+    actions: ['code_change'],
+    successCondition: step.successCondition,
+  });
+
+  const impact = resolveImpact(graph, intent);
+  const risk = classifyRisk(intent, impact);
+  const plan = planMirror(graph, intent, impact);
+  if (plan.safetyViolations.length > 0) {
+    return { ok: false, reason: plan.safetyViolations.join('; ') };
+  }
+
+  const sandbox = flags.has('sandbox') ? await detectSandbox() : NO_SANDBOX;
+  const executor = new LocalMirrorExecutor({
+    sourceRoot: appDir,
+    graph,
+    nodeModulesFrom: flags.get('node-modules'),
+    sandbox,
+    proposal,
+  });
+
+  try {
+    const mechanical = await runMechanicalValidation(intent, plan, executor);
+    for (const check of mechanical.checks) {
+      const ms = check.durationMs === undefined ? '' : ` ${(check.durationMs / 1000).toFixed(1)}s`;
+      console.log(`  ${check.status.toUpperCase().padEnd(13)}${check.name}${ms}`);
+      if (check.status === 'fail') console.log(`                ${check.detail}`);
+    }
+
+    const mirrorRoot = executor.workspace?.root;
+    const after = mirrorRoot === undefined ? graph : (await build(mirrorRoot)).graph;
+
+    // Run the tests this step itself added.
+    //
+    // The verification plan comes from the graph as it was *before* the change,
+    // so a test the step creates cannot be in it — it did not exist when the
+    // plan was made. Without this a step could add a test, never run it, and be
+    // promoted on the strength of the tests it happened not to change. The new
+    // tests are visible in the after-graph, which is exactly what re-ingesting
+    // the mirror produces.
+    const existingTests = new Set(
+      [...graph.nodes()].filter((n) => n.id.startsWith('evidence:test:')).map((n) => n.id),
+    );
+    const addedTests = [...after.nodes()].filter(
+      (n) => n.id.startsWith('evidence:test:') && !existingTests.has(n.id),
+    );
+
+    // The executor's graph predates the change, so it has no path for these.
+    // What re-ingestion saw in the mirror is what it is told.
+    executor.learn(addedTests);
+
+    let addedTestsPassed = true;
+    const addedTestChecks: CheckResult[] = [];
+    for (const test of addedTests) {
+      const outcome = await executor.runVerification(test.id, plan);
+      console.log(
+        `  ${(outcome.ok ? 'PASS' : 'FAIL').padEnd(13)}verify ${test.name} (added by this step)`,
+      );
+      addedTestChecks.push({
+        name: `verify ${test.id} (added by this step)`,
+        status: outcome.ok ? 'pass' : 'fail',
+        detail: outcome.detail,
+        nodes: [test.id],
+        durationMs: outcome.durationMs,
+      });
+      if (!outcome.ok) {
+        addedTestsPassed = false;
+        console.log(`                ${outcome.detail}`);
+      }
+    }
+
+    // These runs gate promotion, so they belong in the record. A lineage entry
+    // that omits a check the decision turned on describes a different decision.
+    const mechanicalRecorded: ValidationReport = {
+      ...mechanical,
+      checks: [...mechanical.checks, ...addedTestChecks],
+      passed: mechanical.passed && addedTestsPassed,
+    };
+
+    const behavioral = await runBehavioralValidation({
+      before: graph,
+      after,
+      intent,
+      impact,
+      evaluator: flags.has('judge') ? new ClaudeEvaluator() : undefined,
+    });
+    for (const check of behavioral.checks) {
+      if (check.status === 'fail') {
+        console.log(`  ${check.status.toUpperCase().padEnd(13)}${check.name} — ${check.detail}`);
+      }
+    }
+
+    let record = openLineage({
+      deploymentId: `step_${step.id}_${Date.now()}`,
+      baseRevision: 'app-in-progress',
+      intent,
+      impact,
+      risk,
+      mirror: plan,
+      validation: [mechanicalRecorded, behavioral],
+      rollback: {
+        toDeploymentId: 'previous step',
+        unrecoverableNodes: [],
+        steps: ['discard the mirror; the app keeps whatever last validated'],
+      },
+    });
+
+    // A behavioral check that could not reach a verdict does not block a step —
+    // without a judge configured, nothing can ever judge a success condition,
+    // and treating that as failure would make every build impossible. A check
+    // that actually failed does block.
+    const behavioralFailed = behavioral.checks.some((c) => c.status === 'fail');
+    const ok = mechanical.passed && addedTestsPassed && !behavioralFailed;
+    record = { ...record, outcome: ok ? 'deployed' : 'abandoned' };
+    const saved = await saveLineage(appDir, record, graph);
+
+    return ok
+      ? { ok: true, lineagePath: saved.path }
+      : {
+          ok: false,
+          reason: !mechanical.passed
+            ? 'the change did not build or its tests did not pass'
+            : !addedTestsPassed
+              ? 'a test this step added did not pass'
+              : 'a behavioral check failed',
+          lineagePath: saved.path,
+        };
+  } finally {
+    await executor.dispose();
+  }
+}
+
+/** A prepared build plan, so the machinery is runnable without a model. */
+async function loadBuildPlan(): Promise<
+  { summary: string; steps: { id: string; goal: string; rationale: string; successCondition: string }[] } | undefined
+> {
+  const { BuildPlanSchema } = await import('@lbr/proposer-claude');
+
+  const file = flags.get('plan');
+  if (file !== undefined && file !== 'true') {
+    const { readFile } = await import('node:fs/promises');
+    // Validated, not cast. The step ids become filenames — one holding the
+    // step's proposal, one holding its lineage — so a plan from a file or from
+    // a model is input, and `BuildStepSchema` is where its ids are constrained
+    // to something that cannot climb out of either directory.
+    const parsed = BuildPlanSchema.safeParse(JSON.parse(await readFile(file, 'utf8')));
+    if (!parsed.success) {
+      // Reported as the field and the reason. A raw schema dump is technically
+      // complete and practically unread, and whoever has to fix the plan is the
+      // person this message is for.
+      const problems = parsed.error.issues
+        .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('\n');
+      throw new Error(`the build plan in ${file} is not usable:\n${problems}`);
+    }
+    return parsed.data;
+  }
+
+  // Otherwise the model decomposes the goal, which is the path this is for.
+  const goal = flags.get('goal');
+  const target = selectTarget(flags.get('app-target') ?? 'node-typescript');
+  if (goal === undefined || goal === 'true') return undefined;
+
+  const { decompose, credentialConfigured } = await import('@lbr/proposer-claude');
+  if (!credentialConfigured()) return undefined;
+
+  try {
+    return await decompose(goal, target, { onCost: (event) => modelCosts.push(event) });
+  } catch {
+    // No credential, a refusal, or an unparseable plan. Half a plan builds an
+    // application missing the parts nobody noticed were absent, so there is no
+    // partial result to return.
+    return undefined;
+  }
+}
+
+async function loadStepProposal(
+  dir: string | undefined,
+  stepId: string,
+): Promise<ChangeProposal | undefined> {
+  if (dir === undefined || dir === 'true') return undefined;
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { parseChangeProposal } = await import('@lbr/runtime-core');
+  try {
+    const raw = await readFile(join(dir, `${stepId}.json`), 'utf8');
+    return parseChangeProposal({ ...JSON.parse(raw), intentId: stepId });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Where a proposal comes from.
  *
  * A prepared proposal on disk is supported because it makes the loop runnable
  * and testable with no model, no network and no credential — which is how the
  * end-to-end behavior of this command is actually verified.
  */
-async function selectProposer(): Promise<ChangeProposer | undefined> {
+async function selectProposer(root?: string): Promise<ChangeProposer | undefined> {
   const file = flags.get('proposal');
   if (file !== undefined && file !== 'true') {
     const { readFile } = await import('node:fs/promises');
@@ -575,8 +976,45 @@ async function selectProposer(): Promise<ChangeProposer | undefined> {
       }),
     };
   }
-  return undefined;
+
+  // Otherwise the model writes it, which is the path this is actually for.
+  const { ClaudeProposer, credentialConfigured } = await import('@lbr/proposer-claude');
+
+  // Checked before the mirror is materialized. The SDK happily constructs a
+  // keyless client and fails at request time, so "it constructed" is not an
+  // answer to "can anything write a change".
+  if (!credentialConfigured()) return undefined;
+
+  return {
+    name: 'claude',
+    async propose(intent, graph, impact): Promise<ChangeProposal> {
+      // The files the change is most likely to need, read at propose time
+      // because only the impact walk knows which those are. Bounded: a prompt
+      // containing the whole repository is one the model reads none of.
+      const context = new Map<string, string>();
+      if (root !== undefined) {
+        const { readFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        for (const implicated of impact.implicated.slice(0, 12)) {
+          const path = implicated.node.attributes['path'];
+          if (typeof path !== 'string') continue;
+          try {
+            context.set(path, await readFile(join(root, path), 'utf8'));
+          } catch {
+            // A node whose file cannot be read is context the model does not
+            // get, not a reason to abandon the change.
+          }
+        }
+      }
+
+      return new ClaudeProposer({
+        context,
+        onCost: (event) => modelCosts.push(event),
+      }).propose(intent, graph, impact);
+    },
+  };
 }
+
 
 /**
  * Turn measured command durations into cost events.
@@ -614,5 +1052,9 @@ function usage(): void {
   console.error(
     '  lbr run      <dir> --goal "..." [--target <file>] [--apply] [--sandbox] [--judge]',
   );
+  console.error(
+    '  lbr build    --goal "..." --out <dir> [--app-target node-typescript] [--plan <file>]',
+  );
+  console.error('                 [--proposals <dir>] [--sandbox]');
   process.exit(1);
 }

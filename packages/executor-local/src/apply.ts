@@ -15,10 +15,18 @@ const MIRROR_PREFIX = 'lbr-mirror-';
 
 export interface ApplyOptions {
   /**
-   * Skip the mirror-name guard.
+   * Skip the mirror-name guard, keeping the path confinement.
    *
-   * Exists for tests that construct a workspace by hand. A caller reaching for
-   * this in production has almost certainly made the mistake the guard is for.
+   * The guard exists because a validation run must never modify the tree it is
+   * validating, and almost every caller wanting around it has made exactly that
+   * mistake. Two cases are legitimate, and both share the property that the
+   * target directory *is* the artifact rather than something being inspected:
+   * `lbr build` scaffolding a new application, and `lbr build` promoting a step
+   * that already validated in a mirror. Tests that construct a workspace by
+   * hand also use it.
+   *
+   * It does not relax the per-path realpath confinement, which is the part that
+   * stops an edit escaping the directory it was pointed at.
    */
   readonly allowNonMirror?: boolean;
 }

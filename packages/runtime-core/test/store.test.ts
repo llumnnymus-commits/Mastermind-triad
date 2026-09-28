@@ -139,3 +139,47 @@ describe('stored lineage is revalidated on the way in', () => {
     await expect(loadLineage(root, 'dep_corrupt')).rejects.toThrow();
   });
 });
+
+describe('a deployment id becomes a filename, so it is validated', () => {
+  it('refuses an id that would write outside the lineage directory', async () => {
+    // A deployment id is not always chosen by the runtime: `lbr build` derives
+    // one from a build step's id, and a build plan can be written by a model.
+    // Unchecked, this function writes JSON wherever that id points.
+    const root = await scratch();
+    for (const id of [
+      '../../../../tmp/escaped',
+      '..',
+      'a/b',
+      '/absolute',
+      'has space',
+      'nul\u0000byte',
+      '',
+    ]) {
+      await expect(saveLineage(root, { ...record(), deploymentId: id }, loginAppGraph())).rejects.toThrow(
+        /unsafe deployment id/,
+      );
+    }
+  });
+
+  it('refuses the same ids on the way back in', async () => {
+    const root = await scratch();
+    await expect(loadLineage(root, '../../../etc/passwd')).rejects.toThrow(/unsafe deployment id/);
+  });
+
+  it('still accepts the ids the runtime actually generates', async () => {
+    const root = await scratch();
+    for (const id of ['dep_001', 'run_1790581417210', 'step_store_1790581417210', 'a.b-c_1']) {
+      const saved = await saveLineage(root, { ...record(), deploymentId: id }, loginAppGraph());
+      expect(saved.deploymentId).toBe(id);
+      expect((await loadLineage(root, id)).record.deploymentId).toBe(id);
+    }
+  });
+
+  it('nothing lands on disk when an id is refused', async () => {
+    const root = await scratch();
+    await expect(
+      saveLineage(root, { ...record(), deploymentId: '../escaped' }, loginAppGraph()),
+    ).rejects.toThrow();
+    expect(await listLineage(root)).toEqual([]);
+  });
+});
