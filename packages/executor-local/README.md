@@ -39,7 +39,11 @@ The executor runs commands, and the graph it reads is populated by adapters that
 
 **The environment is rebuilt, not filtered.** A mirror runs code the runtime is evaluating. Inheriting `process.env` hands that code every credential the host holds — cloud tokens, registry auth, signing keys — in exchange for nothing a build needs. So the child environment is assembled from an allowlist; a denylist would be a promise to predict every secret name anyone will ever introduce.
 
-Paths read out of node attributes are resolved against the workspace and refused if they escape it, so a crafted `path` cannot turn a file-existence probe into a filesystem oracle.
+**Containment is decided on the real filesystem.** Paths read out of node attributes are resolved against the workspace and refused if they escape it. That check calls `realpath` rather than comparing strings, because a lexical test cannot see a symlink — and symlinks leaving the source tree are dropped during the copy rather than reproduced inside the mirror, so there is no door to walk back out of.
+
+**An appended argument may never look like an option.** Absence of a shell is necessary but not sufficient. A value is passed intact to the child, and a child that parses its own argv reads one beginning with `-` as an *option* rather than the operand it was meant to be: `vitest run <filter>` takes a path substring, but `vitest run --config=X` takes a config file. A repository containing a file named `--config=…` could otherwise redirect the runner at anything on the host with `shell: false` fully intact and entirely beside the point. The invariant is enforced centrally in `CommandRunner.run`, and verification paths are additionally passed as explicitly relative operands so they cannot begin with a dash.
+
+These three came out of a security review of this package, each with a working proof of concept; `test/security.test.ts` keeps them fixed.
 
 ## What it does not provide, and says so
 

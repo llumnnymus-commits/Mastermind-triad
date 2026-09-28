@@ -1,4 +1,5 @@
 import { access } from 'node:fs/promises';
+import { relative, sep } from 'node:path';
 import type {
   ExecutionOutcome,
   MirrorExecutor,
@@ -123,7 +124,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       if (planned.mode !== 'real') continue;
       const path = this.#pathOf(planned.id);
       if (path === undefined) continue; // not a file-backed node
-      const resolved = resolveInWorkspace(workspace.root, path);
+      const resolved = await resolveInWorkspace(workspace.root, path);
       if (resolved === undefined) {
         missing.push(planned.id);
         continue;
@@ -174,7 +175,7 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       };
     }
 
-    const resolved = resolveInWorkspace(workspace.root, path);
+    const resolved = await resolveInWorkspace(workspace.root, path);
     if (resolved === undefined) {
       return {
         ok: false,
@@ -182,10 +183,20 @@ export class LocalMirrorExecutor implements MirrorExecutor {
       };
     }
 
-    const result = await this.#runner!.run(command, [path]);
+    // Pass the value that was validated, not the one that was checked — and
+    // pass it as an explicitly relative path so it can never be read as an
+    // option by the tool being invoked. Validating one string and forwarding
+    // another is how a containment check becomes decorative.
+    const operand = `./${relative(workspace.root, resolved).split(sep).join('/')}`;
+    const result = await this.#runner!.run(command, [operand]);
     return {
       ok: result.ok,
-      detail: result.ok ? `${path} passed` : truncate(result.stdout || result.stderr, `${path} failed`),
+      // Report the operand actually passed, not the raw attribute. Echoing the
+      // unvalidated value in a security-relevant message invites the reader to
+      // believe it was the one used.
+      detail: result.ok
+        ? `${operand} passed`
+        : truncate(result.stdout || result.stderr, `${operand} failed`),
       durationMs: result.durationMs,
     };
   }

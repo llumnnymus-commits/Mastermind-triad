@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MirrorPlan } from '@lbr/runtime-core';
-import { createWorkspace, resolveInWorkspace } from '../src/workspace.js';
+import { createWorkspace, resolveInWorkspace, resolveLexically } from '../src/workspace.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = join(here, 'fixture-project');
@@ -29,24 +29,30 @@ describe('workspace path resolution', () => {
     // Node attributes come from adapters reading real repositories, so a
     // `path` is untrusted. Without this, a file-existence probe becomes a
     // filesystem oracle.
-    expect(resolveInWorkspace(root, '../../../../etc/passwd')).toBeUndefined();
-    expect(resolveInWorkspace(root, 'src/../../escape.ts')).toBeUndefined();
+    expect(resolveLexically(root, '../../../../etc/passwd')).toBeUndefined();
+    expect(resolveLexically(root, 'src/../../escape.ts')).toBeUndefined();
   });
 
   it('refuses an absolute path outright', () => {
-    expect(resolveInWorkspace(root, '/etc/passwd')).toBeUndefined();
+    expect(resolveLexically(root, '/etc/passwd')).toBeUndefined();
   });
 
   it('refuses the workspace root itself', () => {
-    expect(resolveInWorkspace(root, '.')).toBeUndefined();
+    expect(resolveLexically(root, '.')).toBeUndefined();
   });
 
   it('accepts an ordinary path inside the workspace', () => {
-    expect(resolveInWorkspace(root, 'src/alpha.ts')).toBe(join(root, 'src/alpha.ts'));
+    expect(resolveLexically(root, 'src/alpha.ts')).toBe(join(root, 'src/alpha.ts'));
   });
 
   it('accepts traversal that stays inside after normalizing', () => {
-    expect(resolveInWorkspace(root, 'src/nested/../alpha.ts')).toBe(join(root, 'src/alpha.ts'));
+    expect(resolveLexically(root, 'src/nested/../alpha.ts')).toBe(join(root, 'src/alpha.ts'));
+  });
+
+  it('does not mistake a leading double dot in a name for traversal', () => {
+    // `..foo` climbs nowhere; testing `startsWith('..')` without the separator
+    // rejects a legitimate filename.
+    expect(resolveLexically(root, '..foo/bar.ts')).toBe(join(root, '..foo/bar.ts'));
   });
 });
 

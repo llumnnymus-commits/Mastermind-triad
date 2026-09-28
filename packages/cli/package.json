@@ -4,8 +4,12 @@
   "description": "Command line surface for the Live Build Runtime: ingest a project, ask what a change would touch, and validate it in an isolated mirror.",
   "type": "module",
   "main": "./dist/cli.js",
-  "bin": { "lbr": "./dist/cli.js" },
-  "files": ["dist"],
+  "bin": {
+    "lbr": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -13,7 +17,8 @@
   "dependencies": {
     "@lbr/runtime-core": "0.0.1",
     "@lbr/adapter-typescript": "0.0.1",
-    "@lbr/executor-local": "0.0.1"
+    "@lbr/executor-local": "0.0.1",
+    "@lbr/adapter-policy": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

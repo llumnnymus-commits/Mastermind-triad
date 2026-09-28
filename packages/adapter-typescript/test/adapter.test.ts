@@ -172,3 +172,42 @@ describe('mirrors are not source', () => {
     }
   });
 });
+
+describe('ingest stays inside the tree it was pointed at', () => {
+  it('does not follow a symlink out of the source and index host files', async () => {
+    // Verified proof of concept from a security review: `ingest` runs no
+    // commands at all, so a repository containing `escape -> /somewhere` could
+    // have every .ts file under that target read, indexed, and written into a
+    // graph that is then serialized and shared — with no build step and no
+    // sandbox escape needed.
+    const { mkdtemp, mkdir, writeFile, symlink, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+
+    const outside = await mkdtemp(join(tmpdir(), 'lbr-host-'));
+    const repo = await mkdtemp(join(tmpdir(), 'lbr-evil-'));
+    try {
+      await mkdir(join(outside, 'internal'), { recursive: true });
+      await writeFile(
+        join(outside, 'internal', 'creds.ts'),
+        `import x from '@acme/internal-billing-secrets';\nexport default x;`,
+      );
+      await mkdir(join(repo, 'src'), { recursive: true });
+      await writeFile(join(repo, 'src', 'app.ts'), 'export const app = 1;');
+      await symlink(outside, join(repo, 'escape'), 'dir');
+
+      const result = await new TypeScriptAdapter().ingest(repo);
+      const names = result.nodes.map((n) => n.name);
+
+      expect(names).toContain('src/app.ts');
+      expect(names.every((n) => !n.includes('escape'))).toBe(true);
+      expect(names.every((n) => !n.includes('creds'))).toBe(true);
+      // Nor should the file's import strings leak in through an edge.
+      expect(
+        result.unresolved.every((u) => !u.reference.includes('internal-billing-secrets')),
+      ).toBe(true);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});

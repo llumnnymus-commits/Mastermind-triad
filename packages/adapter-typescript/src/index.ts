@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, relative, resolve, dirname, sep } from 'node:path';
 import ts from 'typescript';
 import type {
@@ -170,12 +170,28 @@ export class TypeScriptAdapter implements DomainAdapter {
     return candidates.find((candidate) => known.has(normalize(candidate)));
   }
 
+  /**
+   * Walk the source tree, never leaving it.
+   *
+   * `lstat` rather than `stat`, and symlinks are skipped outright. `stat`
+   * follows links, and nothing here constrains where the walk goes, so a
+   * repository containing `escape -> /home/someone` would have every `.ts`
+   * file under that target read, indexed, and written into the graph with its
+   * import strings — and `ingest` runs no commands at all, so this needs no
+   * sandbox escape and no build step. The serialized graph is then a file
+   * someone stores or shares.
+   *
+   * Skipping rather than resolving-and-containing is the deliberate choice: a
+   * source tree that genuinely needs a symlink to build is better served by
+   * saying so than by a containment rule with edge cases.
+   */
   #walk(dir: string, root: string): SourceFile[] {
     const found: SourceFile[] = [];
     for (const entry of readdirSync(dir)) {
       if (this.#ignore.includes(entry)) continue;
       const absolutePath = join(dir, entry);
-      const stats = statSync(absolutePath);
+      const stats = lstatSync(absolutePath);
+      if (stats.isSymbolicLink()) continue;
       if (stats.isDirectory()) {
         found.push(...this.#walk(absolutePath, root));
         continue;

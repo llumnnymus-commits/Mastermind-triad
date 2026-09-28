@@ -108,14 +108,38 @@ export class CommandRunner {
   /**
    * Run one allowlisted command.
    *
-   * `extraArgs` are appended, and are the one place caller-derived values
-   * reach a child process. They are arguments to an already-chosen executable,
-   * never a command in their own right, and they are validated by the caller
-   * before arriving here — `LocalMirrorExecutor` resolves them from workspace
-   * paths it has already confirmed lie inside the workspace.
+   * `extraArgs` are appended, and are the one place caller-derived values reach
+   * a child process. Absence of a shell is necessary but not sufficient for
+   * them to be safe: a value is passed intact to the child, and a child that
+   * parses its own argv will read one beginning with `-` as an OPTION rather
+   * than the positional operand it was meant to be.
+   *
+   * That is not hypothetical. `vitest run <filter>` takes a path substring, but
+   * `vitest run --config=/elsewhere` takes a config file — so a repository
+   * containing a file literally named `--config=…` could redirect the test
+   * runner at anything on the host, with `shell: false` fully intact and
+   * completely beside the point. The entire flag surface of whatever tool is
+   * being invoked is reachable this way.
+   *
+   * So the invariant lives here rather than in each caller: an appended
+   * argument may never look like an option. A caller that genuinely needs to
+   * pass one puts it in the allowlisted command's own fixed `args`.
    */
   async run(command: AllowedCommand, extraArgs: readonly string[] = []): Promise<CommandResult> {
     const started = Date.now();
+
+    const optionLike = extraArgs.filter((arg) => arg.startsWith('-'));
+    if (optionLike.length > 0) {
+      return {
+        ok: false,
+        code: null,
+        stdout: '',
+        stderr: `refusing to pass ${optionLike.length} argument(s) that would be read as options rather than operands: ${optionLike.join(', ')}`,
+        durationMs: Date.now() - started,
+        timedOut: false,
+      };
+    }
+
     const args = [...command.args, ...extraArgs];
 
     try {

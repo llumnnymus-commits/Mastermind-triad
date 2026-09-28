@@ -1,6 +1,17 @@
-import { cp, mkdir, mkdtemp, readdir, rm, rmdir, symlink, access } from 'node:fs/promises';
+import { lstatSync, realpathSync } from 'node:fs';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  rmdir,
+  symlink,
+  access,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative, isAbsolute, dirname, sep } from 'node:path';
+import { join, resolve, relative, isAbsolute, basename, dirname, sep } from 'node:path';
 import type { MirrorPlan } from '@lbr/runtime-core';
 
 export interface WorkspaceOptions {
@@ -101,16 +112,29 @@ export async function createWorkspace(
   // repository root is an ordinary thing to want, so the top level is walked
   // and each surviving entry copied individually; the mirror parent is simply
   // one of the entries that gets skipped.
+  const realSource = (await realpathOrUndefined(sourceRoot)) ?? sourceRoot;
+  const escapingLinks: string[] = [];
+
   for (const entry of await readdir(sourceRoot)) {
     if (exclude.has(entry)) continue;
     await cp(join(sourceRoot, entry), join(root, entry), {
       recursive: true,
       // Dereference nothing: copying through a symlink that points outside the
-      // source tree would pull in files the mirror was never meant to contain.
+      // source tree would pull the target's contents into the mirror.
       dereference: false,
       filter: (source) => {
         const rel = relative(sourceRoot, source);
-        return !rel.split(sep).some((segment) => exclude.has(segment));
+        if (rel.split(sep).some((segment) => exclude.has(segment))) return false;
+        // Not dereferencing keeps a link's *contents* out, but reproducing the
+        // link itself puts a door to the host inside the mirror — and anything
+        // that later resolves a path through it walks straight out again. A
+        // link that leaves the source tree is dropped, and said so rather than
+        // dropped quietly, since a missing file is otherwise a puzzle.
+        if (escapesSource(realSource, source)) {
+          escapingLinks.push(rel);
+          return false;
+        }
+        return true;
       },
     });
   }
@@ -118,6 +142,12 @@ export async function createWorkspace(
   const caveats = [
     'commands run as the host user — no process, network, or filesystem isolation from the machine',
   ];
+
+  if (escapingLinks.length > 0) {
+    caveats.push(
+      `${escapingLinks.length} symlink(s) leaving the source tree were not copied: ${escapingLinks.slice(0, 5).join(', ')}`,
+    );
+  }
 
   if (options.linkNodeModules ?? true) {
     const sourceModules =
@@ -170,14 +200,97 @@ export async function createWorkspace(
  * `path` attribute is untrusted input. Without this check a crafted value like
  * `../../../../etc/shadow` turns a file-existence probe into a filesystem
  * oracle, and any later read into an exfiltration primitive.
+ *
+ * Containment is decided on the real filesystem, not on the string. A purely
+ * lexical check — `resolve` then `relative` — cannot see a symlink, and the
+ * mirror copies symlinks verbatim rather than dereferencing them, so an
+ * ingested repository containing `escape -> /home/someone` makes
+ * `escape/internal/creds.ts` lexically inside the workspace and physically
+ * outside it. Every subsequent `access`, read, or exec through that path
+ * follows the link. The string test is kept only as a cheap first pass.
  */
-export function resolveInWorkspace(workspaceRoot: string, candidate: string): string | undefined {
+export async function resolveInWorkspace(
+  workspaceRoot: string,
+  candidate: string,
+): Promise<string | undefined> {
+  const lexical = resolveLexically(workspaceRoot, candidate);
+  if (lexical === undefined) return undefined;
+
+  const realRoot = await realpathOrUndefined(workspaceRoot);
+  if (realRoot === undefined) return undefined;
+
+  const real = await realpathOfNearestExisting(lexical);
+  if (real === undefined) return undefined;
+
+  return contains(realRoot, real) ? lexical : undefined;
+}
+
+/** The string-only containment test. Exported for the cases with no filesystem yet. */
+export function resolveLexically(workspaceRoot: string, candidate: string): string | undefined {
   if (isAbsolute(candidate)) return undefined;
   const root = resolve(workspaceRoot);
   const resolved = resolve(root, candidate);
-  const rel = relative(root, resolved);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined;
-  return resolved;
+  return contains(root, resolved) ? resolved : undefined;
+}
+
+/**
+ * True when `target` is strictly beneath `root`.
+ *
+ * The separator matters: testing `rel.startsWith('..')` alone also rejects a
+ * legitimate `..foo/bar.ts`, since a path may perfectly well begin with two
+ * dots without climbing anywhere.
+ */
+function contains(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  if (rel === '' || isAbsolute(rel)) return false;
+  return rel !== '..' && !rel.startsWith(`..${sep}`);
+}
+
+/**
+ * Real path of a candidate that may not exist yet.
+ *
+ * `realpath` fails outright on a missing file, but containment still has to be
+ * decided for one — a test file the plan expects and the mirror lacks is
+ * exactly the case `connect` exists to catch. So the deepest existing ancestor
+ * is resolved and the remaining segments appended: the symlinks are all in the
+ * part that exists.
+ */
+async function realpathOfNearestExisting(target: string): Promise<string | undefined> {
+  const trailing: string[] = [];
+  let current = target;
+  for (;;) {
+    const real = await realpathOrUndefined(current);
+    if (real !== undefined) {
+      return trailing.length === 0 ? real : join(real, ...trailing.reverse());
+    }
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    trailing.push(basename(current));
+    current = parent;
+  }
+}
+
+/**
+ * Whether a source entry is a symlink whose target leaves the source tree.
+ *
+ * Synchronous because `cp`'s filter is; the cost is one `lstat` per entry.
+ */
+function escapesSource(realSource: string, source: string): boolean {
+  try {
+    if (!lstatSync(source).isSymbolicLink()) return false;
+    return !contains(realSource, realpathSync(source));
+  } catch {
+    // A broken link resolves nowhere, so it leads nowhere worth copying.
+    return true;
+  }
+}
+
+async function realpathOrUndefined(path: string): Promise<string | undefined> {
+  try {
+    return await realpath(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -192,8 +305,8 @@ async function defaultParentDir(sourceRoot: string): Promise<string> {
 }
 
 /**
- * Walk up from a directory to the nearest `node_modules`, the way Node
- * resolves. Returns undefined at the filesystem root.
+ * Walk up from a directory to the `node_modules` a dependency would actually
+ * resolve from.
  */
 async function findNearestNodeModules(from: string): Promise<string | undefined> {
   // A workspace package often has a `node_modules` holding only `.bin`, while

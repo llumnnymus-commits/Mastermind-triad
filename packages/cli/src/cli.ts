@@ -26,6 +26,7 @@ import {
   type GraphNode,
 } from '@lbr/runtime-core';
 import { TypeScriptAdapter } from '@lbr/adapter-typescript';
+import { PolicyAdapter, DEFAULT_POLICY_PATH } from '@lbr/adapter-policy';
 import { LocalMirrorExecutor } from '@lbr/executor-local';
 
 const [command, ...rest] = process.argv.slice(2);
@@ -60,12 +61,41 @@ try {
   process.exit(1);
 }
 
-async function build(dir: string): Promise<{ graph: ProjectGraph; unresolved: number }> {
-  const result = await new TypeScriptAdapter().ingest(dir);
+/**
+ * Build the graph from every adapter that has something to say about this
+ * project.
+ *
+ * Order matters in one direction only: policy attaches to nodes, so the
+ * domains it governs have to exist before it is ingested. Beyond that adapters
+ * are additive and may overlap — `addNode` replaces by id, so two adapters
+ * describing the same node converge rather than conflict.
+ */
+async function build(dir: string): Promise<BuiltGraph> {
   const graph = new ProjectGraph();
-  for (const node of result.nodes) graph.addNode(node);
-  for (const edge of result.edges) graph.addEdge(edge);
-  return { graph, unresolved: result.unresolved.length };
+
+  const source = await new TypeScriptAdapter().ingest(dir);
+  for (const node of source.nodes) graph.addNode(node);
+  for (const edge of source.edges) graph.addEdge(edge);
+
+  const policy = await new PolicyAdapter({ graph }).ingest(dir);
+  for (const node of policy.nodes) graph.addNode(node);
+  for (const edge of policy.edges) graph.addEdge(edge);
+
+  return {
+    graph,
+    unresolved: source.unresolved.length,
+    policyCount: policy.nodes.length,
+    // A declared rule that governs nothing looks exactly like a rule being
+    // obeyed, so it is surfaced rather than counted as success.
+    inertPolicies: policy.unresolved.map((u) => u.reason),
+  };
+}
+
+interface BuiltGraph {
+  readonly graph: ProjectGraph;
+  readonly unresolved: number;
+  readonly policyCount: number;
+  readonly inertPolicies: readonly string[];
 }
 
 function findNode(graph: ProjectGraph, target: string): GraphNode {
@@ -99,10 +129,16 @@ async function ingest(): Promise<void> {
   const dir = positional[0];
   if (dir === undefined) return usage();
 
-  const { graph, unresolved } = await build(dir);
+  const { graph, unresolved, policyCount, inertPolicies } = await build(dir);
   const size = graph.size;
   console.log(`ingested ${size.nodes} nodes, ${size.edges} edges from ${dir}`);
   console.log(`${unresolved} external reference(s) recorded as unresolved`);
+  console.log(
+    policyCount === 0
+      ? `no policy declared (looked for ${DEFAULT_POLICY_PATH}) — the authority gate has only action class and graph shape to work with`
+      : `${policyCount} policy rule(s) declared and bound`,
+  );
+  for (const inert of inertPolicies) console.log(`  warning: ${inert}`);
 
   const out = flags.get('out');
   if (out !== undefined && out !== 'true') {
@@ -197,7 +233,8 @@ async function validate(): Promise<void> {
 
   if (plan.safetyViolations.length > 0) {
     console.log(`\nREFUSED    ${plan.safetyViolations.join('; ')}\n`);
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
 
   const executor = new LocalMirrorExecutor({
@@ -253,7 +290,11 @@ async function validate(): Promise<void> {
       console.log(`  caveat    ${caveat}`);
     }
     console.log();
-    if (!mechanical.passed) process.exit(1);
+    // Exiting here would skip the `finally` below, leaving a full copy of the
+    // validated project on disk — including, for an ingested third-party
+    // repository, whatever it contained. The code is recorded and applied
+    // after cleanup instead.
+    if (!mechanical.passed) process.exitCode = 1;
   } finally {
     await executor.dispose();
   }

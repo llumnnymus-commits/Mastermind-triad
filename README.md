@@ -10,6 +10,7 @@ An application under this runtime is never "finished, packaged, shipped." It sta
 | --- | --- |
 | [`@lbr/runtime-core`](packages/runtime-core) | The substrate: seven-domain project graph, intent objects, impact resolution, the authority gate, isolated mirrors, validation, progressive deployment with lineage, and cost attribution. |
 | [`@lbr/adapter-typescript`](packages/adapter-typescript) | The first domain adapter — builds the graph from a real TypeScript source tree. |
+| [`@lbr/adapter-policy`](packages/adapter-policy) | Declared policy — the domain that cannot be read off a repository, because it is decisions rather than facts. |
 | [`@lbr/executor-local`](packages/executor-local) | A real `MirrorExecutor`: materializes an isolated workspace and runs actual build and test commands in it. |
 | [`@lbr/cli`](packages/cli) | The `lbr` command line: `ingest`, `impact`, `validate`. |
 
