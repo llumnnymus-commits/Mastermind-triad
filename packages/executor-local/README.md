@@ -55,6 +55,10 @@ This is deliberately the weakest executor worth having. `MirrorWorkspace.caveats
 
 The point is not that a source-tree copy is strong isolation. It is that the executor states its limits rather than letting a caller infer safety from the word "mirror."
 
+## Concurrency
+
+`MirrorExecutor` says nothing about callers serializing their calls, so the executor cannot assume it. Materialization is memoized on the in-flight promise: concurrent `build`/`start`/`connect` share one workspace rather than each creating their own, and `dispose` awaits anything still in flight rather than racing it. Without that, the executor tracked whichever assignment landed last, `dispose` cleaned that one, and the rest were left on disk — full copies of the source tree in the user's repository, containing, for an ingested third-party project, whatever it contained.
+
 ## One thing running it taught
 
 The first real run failed to build with `cannot find module 'zod'`, which reads as a broken project. It was a misplaced mirror.

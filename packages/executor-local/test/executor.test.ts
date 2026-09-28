@@ -203,3 +203,61 @@ describe('the executor refuses what it should refuse', () => {
     await expect(access(root)).rejects.toThrow();
   });
 });
+
+describe('concurrent use does not leak workspaces', () => {
+  it('materializes one workspace however many callers arrive at once', async () => {
+    // build/start/connect invoked together each observed `#workspace ===
+    // undefined` before any finished, so each created its own. The executor
+    // tracked whichever landed last and dispose cleaned that one — leaving
+    // full copies of the source tree on disk, containing, for an ingested
+    // third-party project, whatever it contained.
+    const { mkdtemp, readdir, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const mirrors = await mkdtemp(join(tmpdir(), 'lbr-concurrent-mirrors-'));
+
+    const graph = fixtureGraph();
+    const { plan } = planFor(graph);
+    const executor = new LocalMirrorExecutor({
+      sourceRoot: fixture,
+      graph,
+      commands: fakeCommands,
+      parentDir: mirrors,
+    });
+
+    try {
+      await Promise.all([executor.build(plan), executor.start(plan), executor.connect(plan)]);
+      expect(await readdir(mirrors)).toHaveLength(1);
+    } finally {
+      await executor.dispose();
+      await rm(mirrors, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves nothing behind when disposed while a materialization is in flight', async () => {
+    const { mkdtemp, readdir, rm, access } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const mirrors = await mkdtemp(join(tmpdir(), 'lbr-inflight-mirrors-'));
+
+    const graph = fixtureGraph();
+    const { plan } = planFor(graph);
+    const executor = new LocalMirrorExecutor({
+      sourceRoot: fixture,
+      graph,
+      commands: fakeCommands,
+      parentDir: mirrors,
+    });
+
+    try {
+      // Dispose without awaiting the build: a workspace created moments later
+      // must not outlive the dispose meant to remove it.
+      const building = executor.build(plan);
+      await executor.dispose();
+      await building.catch(() => undefined);
+
+      const leftovers = await readdir(mirrors).catch(() => [] as string[]);
+      expect(leftovers).toEqual([]);
+    } finally {
+      await rm(mirrors, { recursive: true, force: true });
+    }
+  });
+});

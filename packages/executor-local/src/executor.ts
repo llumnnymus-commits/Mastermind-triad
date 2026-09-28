@@ -43,6 +43,19 @@ export class LocalMirrorExecutor implements MirrorExecutor {
   readonly #commands: Readonly<Record<string, AllowedCommand>>;
   #workspace: MirrorWorkspace | undefined;
   #runner: CommandRunner | undefined;
+  /**
+   * The in-flight materialization, shared by concurrent callers.
+   *
+   * Without it, `build`, `start` and `connect` invoked together each observe
+   * `#workspace === undefined` before any of them finishes, and each creates
+   * its own. The executor then tracks whichever assignment landed last, so
+   * `dispose` cleans one and the rest are left on disk — full copies of the
+   * source tree inside the user's repository, containing, for an ingested
+   * third-party project, whatever it contained. The mechanical validator
+   * happens to call these in sequence, but nothing in `MirrorExecutor` says an
+   * implementation may assume that.
+   */
+  #materializing: Promise<MirrorWorkspace> | undefined;
 
   constructor(options: LocalExecutorOptions) {
     this.#options = options;
@@ -202,6 +215,16 @@ export class LocalMirrorExecutor implements MirrorExecutor {
   }
 
   async dispose(): Promise<void> {
+    // Await any materialization still in flight rather than racing it, or a
+    // workspace created moments later outlives the dispose meant to remove it.
+    const pending = this.#materializing;
+    this.#materializing = undefined;
+    if (pending !== undefined) {
+      await pending.then(
+        (w) => w.dispose(),
+        () => undefined,
+      );
+    }
     await this.#workspace?.dispose();
     this.#workspace = undefined;
     this.#runner = undefined;
@@ -214,18 +237,29 @@ export class LocalMirrorExecutor implements MirrorExecutor {
   }
 
   async #ensureWorkspace(plan: MirrorPlan): Promise<MirrorWorkspace> {
-    if (this.#workspace === undefined) {
-      this.#workspace = await createWorkspace(plan, {
-        sourceRoot: this.#options.sourceRoot,
-        parentDir: this.#options.parentDir,
-        nodeModulesFrom: this.#options.nodeModulesFrom,
-      });
-      this.#runner = new CommandRunner({
-        cwd: this.#workspace.root,
+    if (this.#workspace !== undefined) return this.#workspace;
+
+    // Assigned before the first await, so a concurrent caller reaching this
+    // line joins the same materialization instead of starting another.
+    this.#materializing ??= createWorkspace(plan, {
+      sourceRoot: this.#options.sourceRoot,
+      parentDir: this.#options.parentDir,
+      nodeModulesFrom: this.#options.nodeModulesFrom,
+    });
+
+    try {
+      const workspace = await this.#materializing;
+      this.#workspace = workspace;
+      this.#runner ??= new CommandRunner({
+        cwd: workspace.root,
         envAllowlist: this.#options.envAllowlist,
       });
+      return workspace;
+    } catch (error) {
+      // A failed attempt must not be cached, or every later call replays it.
+      this.#materializing = undefined;
+      throw error;
     }
-    return this.#workspace;
   }
 }
 

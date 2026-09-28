@@ -74,12 +74,48 @@ export interface ImpactResult {
   /** Hard limits from the intent that this change would cross. */
   readonly violations: readonly LimitViolation[];
   readonly domainsTouched: readonly string[];
+  /**
+   * Whether the walk saw the whole blast radius, and if not, what it left.
+   *
+   * The dangerous failure of an impact engine is not being wrong, it is being
+   * incomplete while looking complete. A caller that receives a blast radius
+   * has no way to tell a small one from a truncated one unless the result says
+   * so, and every downstream decision — the risk tier, the mirror plan, the
+   * tests chosen — is then made on a partial picture that reads as total.
+   */
+  readonly coverage: Coverage;
+}
+
+export interface Coverage {
+  /** True when nothing was left unexplored for any reason. */
+  readonly complete: boolean;
+  /** Nodes whose expansion was abandoned at `maxDepth`. */
+  readonly depthLimited: number;
+  /**
+   * The strongest score among nodes left unexplored.
+   *
+   * This is the number that matters. Stopping at 0.04 means the walk ran out
+   * of things worth finding; stopping at 0.53 means it stopped while still
+   * finding high-confidence dependents, and the blast radius is short by an
+   * unknown amount.
+   */
+  readonly highestUnexplored: number;
 }
 
 export interface ResolveOptions {
   /** Scores below this stop the walk. Default 0.05. */
   readonly epsilon?: number;
-  /** Maximum edge hops from a target. Default 6. */
+  /**
+   * Hard stop on edge hops from a target. Default 64.
+   *
+   * This is a guard against a pathological graph, not a tuning knob, and it is
+   * set high enough never to bind before `epsilon` does on a real one. The
+   * previous default of 6 bound constantly: the strongest structural weight is
+   * 0.95, so confidence only decays past a 0.05 epsilon after ~59 hops, while
+   * a plain dependency chain hit the depth stop at 0.53 — still firmly in
+   * "this breaks" territory. On a 50-module import chain, an ordinary shape in
+   * real code, that silently reported 6 of 49 dependents.
+   */
   readonly maxDepth?: number;
   /**
    * Confidence below which a node is reported but does not count against the
@@ -180,7 +216,10 @@ export function resolveImpact(
   options: ResolveOptions = {},
 ): ImpactResult {
   const epsilon = options.epsilon ?? 0.05;
-  const maxDepth = options.maxDepth ?? 6;
+  const maxDepth = options.maxDepth ?? 64;
+
+  let depthLimited = 0;
+  let highestUnexplored = 0;
 
   const settled = new Map<NodeId, Entry>();
   const heap = new MaxHeap();
@@ -243,7 +282,11 @@ export function resolveImpact(
       }
     }
 
-    if (current.depth >= maxDepth) continue;
+    if (current.depth >= maxDepth) {
+      depthLimited++;
+      highestUnexplored = Math.max(highestUnexplored, current.score);
+      continue;
+    }
 
     // Direction is sticky, and that is a correctness property rather than an
     // optimization. A walk that steps outbound to a dependency and then inbound
@@ -260,7 +303,10 @@ export function resolveImpact(
       const semantics = EDGE_TYPES[edge.type];
       if (semantics.role !== 'structural' && semantics.role !== 'metadata') continue;
       const score = current.score * semantics.blast;
-      if (score < epsilon) continue;
+      if (score < epsilon) {
+        highestUnexplored = Math.max(highestUnexplored, score);
+        continue;
+      }
       const relation: Relation = semantics.role === 'metadata' ? 'metadata' : 'blast';
       heap.push({
         id: other,
@@ -280,7 +326,10 @@ export function resolveImpact(
       const semantics = EDGE_TYPES[edge.type];
       if (semantics.role !== 'structural' && semantics.role !== 'metadata') continue;
       const score = current.score * semantics.context;
-      if (score < epsilon) continue;
+      if (score < epsilon) {
+        highestUnexplored = Math.max(highestUnexplored, score);
+        continue;
+      }
       const relation: Relation = semantics.role === 'metadata' ? 'metadata' : 'context';
       heap.push({
         id: other,
@@ -342,6 +391,11 @@ export function resolveImpact(
     magnitude: magnitudeOf(structural),
     violations,
     domainsTouched,
+    coverage: {
+      complete: depthLimited === 0 && highestUnexplored < epsilon,
+      depthLimited,
+      highestUnexplored: round(highestUnexplored),
+    },
   };
 }
 

@@ -9,6 +9,11 @@ import {
 import type { Domain } from './domains.js';
 import type { EdgeType } from './edges.js';
 
+/** Two edges are the same edge when they connect the same pair the same way. */
+function edgeIdentity(edge: GraphEdge): string {
+  return `${edge.from}|${edge.type}|${edge.to}`;
+}
+
 export interface AdjacentEdge {
   readonly edge: GraphEdge;
   /** The node on the other end of the edge from the one being queried. */
@@ -31,6 +36,7 @@ export class ProjectGraph {
   readonly #outbound = new Map<NodeId, AdjacentEdge[]>();
   readonly #inbound = new Map<NodeId, AdjacentEdge[]>();
   readonly #edges: GraphEdge[] = [];
+  readonly #edgeIndex = new Map<string, GraphEdge>();
 
   static from(nodes: unknown[], edges: unknown[]): ProjectGraph {
     const graph = new ProjectGraph();
@@ -52,6 +58,15 @@ export class ProjectGraph {
    * Validates and inserts an edge. Both endpoints must already exist — a graph
    * that silently accepts dangling edges produces impact results that are
    * quietly incomplete, which is worse than an error.
+   *
+   * An edge is identified by `(from, type, to)`, and re-adding one replaces it
+   * rather than appending a second copy. Nodes have always converged this way,
+   * and edges must too or the stated design does not hold: adapters are
+   * expected to overlap and to be re-run, so "B depends on A" observed twice is
+   * one fact observed twice, not two dependencies. Accumulating them makes a
+   * re-ingest multiply the graph, and makes a structural diff report phantom
+   * additions for relationships that never changed — which behavioral
+   * validation reads as a change doing more than it claimed.
    */
   addEdge(input: unknown): GraphEdge {
     const edge = GraphEdgeSchema.parse(input);
@@ -61,10 +76,31 @@ export class ProjectGraph {
     if (!this.#nodes.has(edge.to)) {
       throw new Error(`edge references unknown 'to' node: ${edge.to}`);
     }
+
+    const key = edgeIdentity(edge);
+    const existing = this.#edgeIndex.get(key);
+    if (existing !== undefined) this.#removeEdge(existing, key);
+
+    this.#edgeIndex.set(key, edge);
     this.#edges.push(edge);
     this.#outbound.get(edge.from)!.push({ edge, other: edge.to });
     this.#inbound.get(edge.to)!.push({ edge, other: edge.from });
     return edge;
+  }
+
+  #removeEdge(edge: GraphEdge, key: string): void {
+    this.#edgeIndex.delete(key);
+    const at = this.#edges.indexOf(edge);
+    if (at !== -1) this.#edges.splice(at, 1);
+    this.#dropAdjacent(this.#outbound, edge.from, edge);
+    this.#dropAdjacent(this.#inbound, edge.to, edge);
+  }
+
+  #dropAdjacent(index: Map<NodeId, AdjacentEdge[]>, id: NodeId, edge: GraphEdge): void {
+    const list = index.get(id);
+    if (list === undefined) return;
+    const at = list.findIndex((a) => a.edge === edge);
+    if (at !== -1) list.splice(at, 1);
   }
 
   node(id: NodeId): GraphNode | undefined {

@@ -153,6 +153,13 @@ function describeRisks(risk: RiskAssessment, impact: ImpactResult): string[] {
   if (impact.verifications.length === 0) {
     risks.push('no tests or evaluations are attached to any implicated node — failure would be silent');
   }
+  if (!impact.coverage.complete) {
+    // Someone deciding whether to authorize this is entitled to know the list
+    // they are looking at is short.
+    risks.push(
+      `the impact walk did not finish: ${impact.coverage.depthLimited} node(s) were left unexplored at confidence up to ${impact.coverage.highestUnexplored}, so the affected list below is incomplete`,
+    );
+  }
   return risks;
 }
 

@@ -171,6 +171,11 @@ async function impact(): Promise<void> {
     if (result.blastRadius.length > 12) {
       console.log(`  …and ${result.blastRadius.length - 12} more`);
     }
+    if (!result.coverage.complete) {
+      console.log(
+        `  INCOMPLETE — the walk stopped with ${result.coverage.depthLimited} node(s) unexplored at confidence up to ${result.coverage.highestUnexplored}; this list is short by an unknown amount`,
+      );
+    }
   } else {
     console.log('\nBREAKS IF THIS IS WRONG\n  nothing depends on this file');
   }
@@ -222,7 +227,9 @@ async function validate(): Promise<void> {
 
   console.log(`\nCHANGING   ${node.name}`);
   console.log(
-    `IMPACT     ${impactResult.structuralCount} structural nodes · magnitude ${impactResult.magnitude}`,
+    `IMPACT     ${impactResult.structuralCount} structural nodes · magnitude ${impactResult.magnitude}${
+      impactResult.coverage.complete ? '' : ' · INCOMPLETE WALK'
+    }`,
   );
   console.log(
     `AUTHORITY  ${risk.tier.toUpperCase()}${risk.requiresApproval ? ' · approval required' : ' · unattended'}`,

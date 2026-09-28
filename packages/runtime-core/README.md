@@ -32,7 +32,7 @@ npx tsx packages/runtime-core/src/demo.ts
 
 The demo runs two intents through the whole loop against the same graph. They implicate a nearly identical set of nodes — 11 structural nodes, magnitude 0.85 versus 0.865 — and receive opposite verdicts: the restart proceeds unattended; the migration stops for approval, is validated in an isolated mirror, deploys progressively, and is rolled back at 10% exposure when production disagrees with the tests. A node-count threshold cannot tell those two intents apart. That difference is the reason this package exists.
 
-## The three design decisions that matter
+## The design decisions that matter
 
 ### 1. Impact is directional
 
@@ -45,11 +45,21 @@ Blast weights are high and context weights are low for the same edge type. Colla
 
 The walk is a max-product relaxation, so a node reachable by both a weak and a strong path settles on the strong one — anything else understates the blast radius.
 
+It is bounded by **confidence, not hops**. `epsilon` says "stop when nothing worth finding is left"; `maxDepth` is a guard against a pathological graph and is set high enough never to bind before epsilon on a real one. An arbitrary hop limit is worse than useless here: a 50-module import chain is an ordinary shape, and a depth stop of 6 reported 6 of its 49 dependents while the confidence at the cutoff was still 0.53 — firmly in "this breaks" territory.
+
+And when the walk *is* cut short, `coverage` says so, because the dangerous failure of an impact engine is not being wrong but being incomplete while looking complete. A caller cannot distinguish a small blast radius from a truncated one unless the result tells them, and every downstream decision — risk tier, mirror plan, tests chosen — is then made on a partial picture that reads as total. The CLI prints `INCOMPLETE`, and the approval request tells the human deciding that the list they are looking at is short.
+
 Direction is also **sticky**, which is a correctness property rather than an optimization. A walk that steps outbound to a dependency and then inbound again arrives at *siblings* — other modules importing the same thing. They share a dependency with the target; they do not depend on it, and changing the target cannot break them. Mixing directions reports them as casualties, and on a real codebase that is most of what a naive blast radius contains.
 
 No structural weight sits at exactly 1.0 either. At 1.0 a dependency chain never decays, so every transitive dependent of a core module scores the same as a direct importer. Confidence genuinely falls with distance — intermediate modules encapsulate — so the weights say so.
 
-### 2. Policy binds at the strength of what it governs; verification does not
+### 2. Observing the same thing twice is one thing
+
+Adapters are additive, expected to overlap, and re-run on every invocation. Nodes converge by id, and edges converge by `(from, type, to)` for the same reason: "B depends on A" observed twice is one fact observed twice, not two dependencies.
+
+Getting this wrong was subtle rather than loud. A re-ingest multiplied the edge count each pass, and a structural diff then reported phantom added edges for relationships that had never changed — which behavioral validation reads as a change doing more than it claimed, i.e. the scope-escape check firing on nothing at all.
+
+### 3. Policy binds at the strength of what it governs; verification does not
 
 A policy attached to a node that is barely implicated is barely relevant. Attaching every reachable policy at full weight makes a data-retention rule bind a worker restart, and a gate that fires on everything is a gate people learn to click past. So a constraint inherits the score of the node it governs — the `governed_by` hop itself costs nothing, but distance to the governed node still counts.
 
@@ -59,7 +69,7 @@ But verification attaches only to the target and the blast radius, never to cont
 
 A policy may declare `appliesToActions`. A PII retention rule governs schema migrations and data deletion — it has no opinion about whether a worker may be restarted.
 
-### 3. Graph reach is not a risk signal for transient actions
+### 4. Graph reach is not a risk signal for transient actions
 
 Restarting a rate limiter that three live surfaces depend on has the same blast radius as migrating the schema underneath them. The graph alone cannot separate those, because the difference is not structural: a restart interrupts and recovers, a migration does not.
 
