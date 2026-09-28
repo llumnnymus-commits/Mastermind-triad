@@ -27,13 +27,23 @@ export interface ExecutionOutcome {
 }
 
 /**
- * Run mechanical validation: does it build, start, connect, and pass the tests
- * attached to the nodes this change implicates.
+ * Run mechanical validation: is the mirror what the plan asked for, does it
+ * build and start, and does it pass the tests attached to the nodes this
+ * change implicates.
  *
  * Ordering is not cosmetic. Each step is a precondition for the next being
  * meaningful — test failures in something that never started tell you nothing
  * about the change — so the run stops at the first failure rather than
  * producing a long report of consequences of one root cause.
+ *
+ * `connect` comes first, and that ordering is a safety property rather than a
+ * preference. It is the step that confirms the mirror actually satisfies the
+ * plan — every node the plan wanted materialized is present, and no caveat
+ * means the isolation the plan assumed was never established. `build` runs the
+ * project's own scripts, which on an ingested third-party repository is
+ * running somebody else's code. Checking the mirror afterwards would mean the
+ * untrusted code had already run inside an environment nothing had verified,
+ * so a caller that gates on those caveats would be gating after the fact.
  */
 export async function runMechanicalValidation(
   intent: Intent,
@@ -52,9 +62,9 @@ export async function runMechanicalValidation(
   }
 
   for (const [name, run] of [
+    ['connect', executor.connect],
     ['build', executor.build],
     ['start', executor.start],
-    ['connect', executor.connect],
   ] as const) {
     const outcome = await run.call(executor, plan);
     checks.push({

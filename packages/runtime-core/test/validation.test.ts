@@ -34,11 +34,11 @@ function passingExecutor(): MirrorExecutor {
 describe('mechanical validation', () => {
   const { intent, plan } = setup({ id: 'i_mech' });
 
-  it('runs build, start, connect, then the attached tests', async () => {
+  it('verifies the mirror, then builds and starts, then runs the attached tests', async () => {
     const report = await runMechanicalValidation(intent, plan, passingExecutor());
     expect(report.passed).toBe(true);
     const names = report.checks.map((c) => c.name);
-    expect(names.slice(0, 3)).toEqual(['build', 'start', 'connect']);
+    expect(names.slice(0, 3)).toEqual(['connect', 'build', 'start']);
     expect(names.filter((n) => n.startsWith('verify')).length).toBe(plan.verificationPlan.length);
   });
 
@@ -49,7 +49,26 @@ describe('mechanical validation', () => {
     };
     const report = await runMechanicalValidation(intent, plan, executor);
     expect(report.passed).toBe(false);
-    expect(report.checks.map((c) => c.name)).toEqual(['build', 'start']);
+    expect(report.checks.map((c) => c.name)).toEqual(['connect', 'build', 'start']);
+  });
+
+  it('never runs project code in a mirror it has not verified', async () => {
+    // `build` runs the project's own scripts, which on an ingested repository
+    // is running somebody else's code. If `connect` reports the mirror does
+    // not satisfy the plan, that code must not have run already.
+    let built = false;
+    const executor: MirrorExecutor = {
+      ...passingExecutor(),
+      connect: async () => ({ ok: false, detail: 'mirror cannot satisfy the plan' }),
+      build: async () => {
+        built = true;
+        return { ok: true, detail: 'built' };
+      },
+    };
+
+    const report = await runMechanicalValidation(intent, plan, executor);
+    expect(built).toBe(false);
+    expect(report.checks.map((c) => c.name)).toEqual(['connect']);
   });
 
   it('refuses to run a mirror plan that violates isolation', async () => {
