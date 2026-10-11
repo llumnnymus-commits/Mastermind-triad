@@ -4,3 +4,4 @@ Drive a verse: `python3 -I src/cli.py verses/NAME.json new 10` · `add "line"` �
 Don't repeat: pip/PyPI and raw.githubusercontent are blocked (CMUdict came via `git clone` through proxy); never zip; no video-pipeline talk; no doc syllable defaults; don't make perfect/slant the pillar.
 Open elsewhere: OGM concept doc (artifact 2639c27e-dd26-4e56-b2dd-54f1deb9a4e8) still has a video example to neutralize.
 Deliver files individually; never zip.
+Backups: Drive folder id 1Y3hpoqmQ9mvxGl3jtziRCr0miqbL8dvz (z.n.parrish1993). GitHub push pending user-created repo llumnnymus-commits/verse-engine (empty, no README) → add_repo(owner, repo, access="push") → `git remote add origin https://github.com/llumnnymus-commits/verse-engine && git push -u origin main`.
