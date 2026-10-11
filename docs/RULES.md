@@ -1,5 +1,5 @@
 # RULES — extracted from the 16 uploaded rap documents + the Perplexity 39-principle walkthrough
-Updated 2026-10-10. Sources: CRIT=AI_Rap_Song_Training_Criteria · INSTR=AI_Rap_Training_Instructions · MAN=AI_Rap_Training_Manual_Creation · WALK=39-principle walkthrough · BOOT=Rap_Boot_Camp_Curriculum · CORE=Core_Logic_Implementation · PIPE=AI_Rap_Generation_Pipeline · S1/S3-5/S7=Stage PDFs · PHON=Advanced_Rap_Phonetic_Rhyming_Guide · RSM=Advanced_Rhyme_Scheme_Masterclass · LAY=Layering_Complex_Rap_Rhyme_Schemes · STORY=Mastering_Rap_Storytelling · EXP=Expanding_Rap_Lyrical_Principles · CRAFT=Crafting_Rap_from_Any_Text · LIT=Rhyme_Lyrical_Literal_Miracle
+Updated 2026-10-11 (statuses current). Sources: CRIT=AI_Rap_Song_Training_Criteria · INSTR=AI_Rap_Training_Instructions · MAN=AI_Rap_Training_Manual_Creation · WALK=39-principle walkthrough · BOOT=Rap_Boot_Camp_Curriculum · CORE=Core_Logic_Implementation · PIPE=AI_Rap_Generation_Pipeline · S1/S3-5/S7=Stage PDFs · PHON=Advanced_Rap_Phonetic_Rhyming_Guide · RSM=Advanced_Rhyme_Scheme_Masterclass · LAY=Layering_Complex_Rap_Rhyme_Schemes · STORY=Mastering_Rap_Storytelling · EXP=Expanding_Rap_Lyrical_Principles · CRAFT=Crafting_Rap_from_Any_Text · LIT=Rhyme_Lyrical_Literal_Miracle
 
 Tags
 - **U-HARD** user-stated, enforced by the engine now (rejects mutations).
@@ -15,7 +15,7 @@ Tags
 | U2 | Target is whatever the user says (5, 10, any); "too much of a mouthful" => user sets a smaller N and lines are cut to it | U-HARD | BUILT |
 | U3 | Mutate, never regenerate; corrections change named slots only | U-HARD | BUILT |
 | U4 | Rhyme judged by spoken sound (consonance, assonance, alliteration, resonance, phonetics), spelling irrelevant | U-HARD | BUILT |
-| U5 | Hard constraints from the docs are followed (this file) | U-HARD | in progress |
+| U5 | Hard constraints from the docs are followed (this file), as resolved by the user below | U-HARD | partial — see Status column |
 
 ## B. Phonetic & rhyme (WALK P1-9)
 | Rule | Source | Tag | Status |
@@ -26,8 +26,8 @@ Tags
 | Assonance / consonance: 1-3 core vowel or consonant sounds dominate a stanza; plosives for aggression, sibilants for smooth | INSTR P4/5, WALK P4/5/33 | SOFT | resonance() built; stanza-level palette not yet |
 | Multi-syllable rhymes: vowel sequence AND stress pattern must align | INSTR P7 "absolute precision", WALK P7 | D-HARD (for a claimed multi) | partial (tail match; stress-pattern check not built) |
 | Mosaic / compound rhymes (phrase vs word/phrase), differing word counts allowed | CRIT, WALK P36/37, RSM 1.2 | SOFT | BUILT (phrases) |
-| Internal rhymes required; rhymes not only at line ends | INSTR P8 "forbidden to place rhymes exclusively at line ends" | D-HARD | not built |
-| Internal rhyme phonemes distinct from end-rhyme phonemes (Layer_Clash_Threshold) | INSTR P8, MAN | D-HARD | not built — CONFLICT C4 |
+| Internal rhymes required; rhymes not only at line ends | INSTR P8 "forbidden to place rhymes exclusively at line ends" | D-HARD → user C3: no minimum | BUILT: internal rhymes detected + reported |
+| Internal rhyme phonemes distinct from end-rhyme phonemes (Layer_Clash_Threshold) | INSTR P8, MAN | U-HARD (user C4) | BUILT: RULE INTERNAL_EQUALS_END, blocks export |
 | Word bending allowed within a "bending threshold"; else refuse | INSTR P9, MAN | SOFT | not built (needs pronunciation overrides) |
 | Syllables inside a word may rhyme (internal syllabic rhyme, tmesis) | RSM 1.3, LIT | SOFT | not built |
 
@@ -48,16 +48,16 @@ Tags
 | Three layers: primary end scheme, secondary internal multis, tertiary assonance/consonance wash | INSTR P17, WALK P17 | SOFT | not built |
 | No static monorhyme for long stretches; use pivot words | INSTR P18 "forbidden" | D-HARD | not built |
 | Scheme evolves at quadrant boundaries (~every 4 bars) | INSTR P19, BOOT | SOFT | not built |
-| Asymmetric schemes (XAXA): X lines free of rhyme constraints, carry key narrative | INSTR P20 | SOFT | not built — conflicts with internal-rhyme minimums (C5) |
+| Asymmetric schemes (XAXA): X lines free of rhyme constraints, carry key narrative | INSTR P20 | SOFT | X lines shown in scheme report; no minimums exist (C3) |
 | Introductory dense bar -> 2-3 seed phrases -> parallel schemes | INSTR P21, WALK P21 | SOFT | not built |
 | Vertical stacking (4-syl end rhyme + 2-syl internal + assonance + alliteration in one bar) | INSTR P22 | SOFT | not built |
 | Horizontal weaving: motif intro Q1, fade Q2, callback Q4 across 16 bars | INSTR P23 | SOFT | not built |
-| Braided template (CRIT 5.2): Bar1 intA→endB, Bar2 intA→endB, Bar3 intC→endA, Bar4 intC→endA; >=2 internal rhymes per bar | CRIT | D-HARD (only if braid requested) | not built |
+| Braided template (CRIT 5.2): Bar1 intA→endB, Bar2 intA→endB, Bar3 intC→endA, Bar4 intC→endA; >=2 internal rhymes per bar | CRIT | user C5: braiding = distinct schemes interleaving, no minimum | BUILT: braid report |
 
 ## E. Output hygiene
 | Rule | Source | Tag | Status |
 |---|---|---|---|
-| Zero meta-commentary / markup in lyrics output (regex ban list; -1.0 hard clamp) | CORE, INSTR, CRIT | D-HARD | export returns lyrics only; regex list not implemented |
+| Zero meta-commentary / markup in lyrics output (regex ban list; -1.0 hard clamp) | CORE, INSTR, CRIT | D-HARD | BUILT: markup/labels/counts/wrappers block export; doc cliché list flags only (doc regexes were overbroad) |
 | Reject nonsense produced only to force a rhyme ("Dr. Seuss effect") | CRIT 3.3, C2 | HUMAN | flagged for user |
 | Prefer colloquial/slang over stiff grammar; enallage allowed if meaning stays clear | CRIT, INSTR/WALK P38 | HUMAN | — |
 | Never sacrifice meaning for sound repetition; coherence is top priority | WALK intro/P4, STORY | HUMAN (BERTScore >= ~0.85 in INSTR is OUT) | — |
