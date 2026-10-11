@@ -1,0 +1,191 @@
+{
+ "pattern": [
+  11
+ ],
+ "lines": [
+  {
+   "words": [
+    "cold",
+    "steel",
+    "in",
+    "my",
+    "palm",
+    "and",
+    "I",
+    "been",
+    "holding",
+    "it"
+   ],
+   "locked": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   "line_lock": false
+  },
+  {
+   "words": [
+    "the",
+    "night",
+    "is",
+    "young",
+    "but",
+    "the",
+    "block",
+    "is",
+    "frozen",
+    "still"
+   ],
+   "locked": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   "line_lock": false
+  },
+  {
+   "words": [
+    "I",
+    "keep",
+    "my",
+    "mind",
+    "on",
+    "the",
+    "cash",
+    "and",
+    "folding",
+    "it"
+   ],
+   "locked": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   "line_lock": false
+  },
+  {
+   "words": [
+    "the",
+    "light",
+    "is",
+    "gone",
+    "and",
+    "the",
+    "clock",
+    "is",
+    "broken",
+    "still"
+   ],
+   "locked": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   "line_lock": false
+  }
+ ],
+ "overrides": {},
+ "pron_overrides": {},
+ "waivers": [],
+ "stale_targets": false,
+ "log": [
+  {
+   "n": 1,
+   "t": "2026-10-10T23:34:21",
+   "op": "add_line",
+   "status": "APPLIED",
+   "line": 0,
+   "text": "cold steel in my palm and I been holding it"
+  },
+  {
+   "n": 2,
+   "t": "2026-10-10T23:34:21",
+   "op": "add_line",
+   "status": "APPLIED",
+   "line": 1,
+   "text": "chosen is young but the block is frozen still"
+  },
+  {
+   "n": 3,
+   "t": "2026-10-10T23:34:22",
+   "op": "add_line",
+   "status": "REJECTED",
+   "code": "SYLLABLE_COUNT",
+   "detail": "add_line: line 3 would have 12 syllables, target is 11 (+1).",
+   "line": 2,
+   "text": "I keep my mind on the cash and folding it and"
+  },
+  {
+   "n": 4,
+   "t": "2026-10-10T23:34:22",
+   "op": "add_line",
+   "status": "APPLIED",
+   "line": 2,
+   "text": "I keep my mind on the cash and folding it"
+  },
+  {
+   "n": 5,
+   "t": "2026-10-10T23:34:22",
+   "op": "add_line",
+   "status": "APPLIED",
+   "line": 3,
+   "text": "the light is gone and the clock is broken still"
+  },
+  {
+   "n": 6,
+   "t": "2026-10-10T23:34:41",
+   "op": "replace_span",
+   "status": "APPLIED",
+   "line": 1,
+   "span": [
+    0,
+    1
+   ],
+   "before": "chosen is young but the block is frozen still",
+   "new": "the night"
+  },
+  {
+   "n": 7,
+   "t": "2026-10-10T23:34:41",
+   "op": "replace_span",
+   "status": "REJECTED",
+   "code": "SYLLABLE_COUNT",
+   "detail": "replace_span: line 2 would have 12 syllables, target is 11 (+1).",
+   "line": 1,
+   "span": [
+    0,
+    1
+   ],
+   "before": "the night is young but the block is frozen still",
+   "new": "the night"
+  }
+ ]
+}

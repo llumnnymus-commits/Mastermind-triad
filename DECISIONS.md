@@ -1,0 +1,14 @@
+# DECISIONS
+- 2026-10-10 Mutation not regeneration: slot edits on a persistent verse; LLM may only pick among engine-passing candidates.
+- 2026-10-10 Syllable target is user-set (int or repeating list); supersedes conflicting doc ranges. Rejected: SFT/LoRA/PPO pipeline (needs A100, still regenerates); kept only its checker ideas.
+- 2026-10-10 CMUdict is sole syllable/phoneme authority; no pyphen/vowel-heuristic guessing. Ambiguous/unknown -> reject until user override. Rationale: silent miscounts break the one hard rule.
+- 2026-10-10 Rhyme by spoken phonemes only (user: "dispelled" vs "wayward"; spelling irrelevant). Unknown word -> 'unknown', never spelling fallback.
+- 2026-10-10 set_pattern may leave flagged violators (only state allowing them); export blocked until each cut by user.
+- 2026-10-10 Runs in cloud sandbox; files delivered via chat (user is on Android, no local hosting).
+- 2026-10-10 NO ZIP FILES, ever (user: zips always corrupt on upload/save/download). Deliver individual plain files via SendUserFile.
+- 2026-10-10 RULES.md conflict defaults C1-C9 adopted (user rule overrides doc syllable ranges; perfect allowed on anchors, slant preferred; internal-rhyme minimums not enforced; internal≠end enforced within same bar only; XAXA open lines exempt; coherence beats density; grid layer optional/off; dictionary count + user overrides; doc-stated counts not trusted).
+- 2026-10-10 USER RESOLVED C1-C9: own syllable rule; LYRICAL rhyme is the pillar (perfect/slant allowed, secondary); internal must sound different from end (export-blocking RULE, waivable per line); braiding reported, no minimum; no internal-rhyme minimum; doc errors excluded.
+- 2026-10-10 Lyrical rhyme defined computationally (>=2 end-aligned syllables, tail vowel + coda support, repeated/function words transparent). Chosen so "holding it/frozen still" (vowel-only) is NOT lyrical and "critic/missed it" is.
+- 2026-10-10 Internal≠end check covers ALL mid-line units (a mid-line word rhyming with an ending is an internal rhyme on the end sound), own bar + schemed bars within ±3.
+- 2026-10-10 Doc meta-ban regexes were overbroad ("yo.*yo" matches "you know your"); replaced with word-bounded phrases, FLAG only. Hard hygiene = markup, bracket/section labels, parenthesized counts, assistant wrappers.
+- 2026-10-10 "-in'" words derive pronunciation from CMUdict "-ing" (deterministic NG->N), labelled source "g-drop rule"; other slang requires user-stated ARPABET.
