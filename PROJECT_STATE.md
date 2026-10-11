@@ -30,4 +30,4 @@ Rap-verse system that MUTATES a persistent verse on correction (never regenerate
 
 ## Backups (2026-10-11)
 - Google Drive (z.n.parrish1993@gmail.com): folder "verse-engine" id 1Y3hpoqmQ9mvxGl3jtziRCr0miqbL8dvz (subfolders src/ tests/ docs/). All text files uploaded and byte-size verified. data/cmudict.dict (3.6 MB, public CMU dictionary) NOT on Drive — re-obtainable via `git clone https://github.com/cmusphinx/cmudict`.
-- GitHub: local git repo committed (branch main). NOT pushed — no repo exists for it and this session cannot create repos. Blocker: user must create an empty repo (suggested llumnnymus-commits/verse-engine, private); then add_repo(push) + `git push`.
+- GitHub: local git repo committed (branch main). NOT pushed — no repo exists for it and this session cannot create repos. Target set by user: llumnnymus-commits/works-archive (subfolder verse-engine/). Blocker: this session's GitHub connection has no access to that repo.
