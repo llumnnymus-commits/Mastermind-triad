@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "graph_engine_integrity",
+      "kind": "safety_rule",
+      "name": "Impact engine changes need review",
+      "rationale": "Every safety decision in this runtime derives from the impact walk. A wrong weight or a mixed direction does not fail loudly - it quietly under-reports a blast radius, and the gate keeps returning verdicts that look fine.",
+      "requiresApproval": true,
+      "appliesToActions": ["code_change"],
+      "governs": [
+        "src/impact/resolve.ts",
+        "src/graph/edges.ts",
+        "src/policy/risk.ts"
+      ]
+    },
+    {
+      "id": "executor_command_surface",
+      "kind": "approval_requirement",
+      "name": "Command execution surface needs review",
+      "rationale": "This code runs child processes against source trees ingested from elsewhere. Its security properties hold by construction - no shell, no option-shaped arguments, allowlisted argv, rebuilt environment, containment resolved on the real filesystem - and a change here can remove one without any test noticing.",
+      "requiresApproval": true,
+      "appliesToActions": ["code_change", "config_change", "permission_change"],
+      "governs": ["src/commands.ts", "src/workspace.ts", "src/executor.ts"]
+    }
+  ]
+}

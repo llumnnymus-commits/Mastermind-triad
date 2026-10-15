@@ -1,0 +1,26 @@
+{
+  "name": "@lbr/proposer-claude",
+  "version": "0.0.1",
+  "description": "Proposes real file edits for an intent, and decomposes an app description into one intent per graph node.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": "./dist/index.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lbr/runtime-core": "0.0.1",
+    "@lbr/app-target-node": "0.0.1",
+    "@anthropic-ai/sdk": "^0.128.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

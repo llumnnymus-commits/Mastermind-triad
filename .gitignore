@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.lbr-mirrors/
+
+# lineage is run output; .lbr/policy.json is tracked config
+.lbr/lineage/
